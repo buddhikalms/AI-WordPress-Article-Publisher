@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import ArticlePreview from "@/components/ArticlePreview";
 import LinkTable from "@/components/LinkTable";
 import SeoFields from "@/components/SeoFields";
@@ -23,12 +23,21 @@ type PublishResultState = {
   postId: number;
   link: string;
   status: string;
+  categories?: number[];
+  inlineImages?: Array<{ id: number; sourceUrl: string; altText?: string }>;
   seoUpdate: {
     ok: boolean;
     provider: SEOProvider;
     details: string;
     error?: unknown;
   };
+};
+
+type CategoryOption = {
+  id: number;
+  name: string;
+  slug: string;
+  count?: number;
 };
 
 const toneOptions = [
@@ -60,6 +69,7 @@ const initialLink: HyperlinkInput = {
   url: "",
   anchorText: "",
   required: true,
+  followType: "dofollow",
 };
 
 const getApiError = async (response: Response) => {
@@ -107,6 +117,7 @@ const normalizeLinks = (links: HyperlinkInput[]) => {
     url: row.url.trim(),
     anchorText: row.anchorText.trim(),
     required: row.required,
+    followType: row.followType || "dofollow",
   }));
 };
 
@@ -125,6 +136,10 @@ export default function HomePage() {
   const [seoProvider, setSeoProvider] = useState<SEOProvider>("None");
   const [seoPayload, setSeoPayload] = useState<SeoPayload>(initialSeoPayload);
   const [links, setLinks] = useState<HyperlinkInput[]>([initialLink]);
+  const [inPostImageCount, setInPostImageCount] = useState<number>(0);
+  const [categories, setCategories] = useState<CategoryOption[]>([]);
+  const [selectedCategoryIds, setSelectedCategoryIds] = useState<number[]>([]);
+  const [newCategoryName, setNewCategoryName] = useState("");
 
   const [generatedHtml, setGeneratedHtml] = useState("");
   const [excerpt, setExcerpt] = useState("");
@@ -139,11 +154,40 @@ export default function HomePage() {
   const [isGeneratingDraft, setIsGeneratingDraft] = useState(false);
   const [isGeneratingImage, setIsGeneratingImage] = useState(false);
   const [isPublishing, setIsPublishing] = useState(false);
+  const [isLoadingCategories, setIsLoadingCategories] = useState(false);
 
   const keywordsCount = useMemo(
     () => parseKeywords(keywords).length,
     [keywords],
   );
+
+  const loadCategories = async (showToastOnError = false) => {
+    try {
+      setIsLoadingCategories(true);
+      const response = await fetch("/api/wp-categories");
+      if (!response.ok) {
+        throw new Error(await getApiError(response));
+      }
+      const data = (await response.json()) as { categories: CategoryOption[] };
+      setCategories(data.categories || []);
+    } catch (error) {
+      if (showToastOnError) {
+        setToast({
+          type: "error",
+          message:
+            error instanceof Error
+              ? error.message
+              : "Failed to load WordPress categories.",
+        });
+      }
+    } finally {
+      setIsLoadingCategories(false);
+    }
+  };
+
+  useEffect(() => {
+    void loadCategories(false);
+  }, []);
 
   const handleGenerateDraft = async () => {
     try {
@@ -273,11 +317,15 @@ export default function HomePage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           title: title.trim(),
+          brief: brief.trim(),
           html: generatedHtml,
           excerpt: excerpt.trim(),
           status: "draft",
           featuredImageBase64: generatedImage?.imageBase64,
           featuredImageMime: generatedImage?.mimeType,
+          inPostImageCount: Number(inPostImageCount) || 0,
+          selectedCategoryIds,
+          newCategoryName: newCategoryName.trim(),
           seoProvider,
           seoPayload,
         }),
@@ -289,6 +337,10 @@ export default function HomePage() {
 
       const data = (await response.json()) as PublishResultState;
       setPublishResult(data);
+      if (newCategoryName.trim()) {
+        setNewCategoryName("");
+        void loadCategories(false);
+      }
       setToast({
         type: data.seoUpdate.ok ? "success" : "info",
         message: data.seoUpdate.ok
@@ -415,6 +467,71 @@ export default function HomePage() {
                 />
               </div>
 
+              <div>
+                <label className="label">In-Post Image Count</label>
+                <input
+                  type="number"
+                  className="input"
+                  min={0}
+                  max={10}
+                  value={inPostImageCount}
+                  onChange={(event) =>
+                    setInPostImageCount(
+                      Math.max(0, Math.min(10, Number(event.target.value) || 0)),
+                    )
+                  }
+                />
+                <p className="mt-1 text-xs text-slate-500">
+                  Number of extra images to generate and embed in article body.
+                </p>
+              </div>
+
+              <div className="md:col-span-2">
+                <div className="mb-1 flex items-center justify-between">
+                  <label className="label mb-0">Categories</label>
+                  <button
+                    type="button"
+                    className="button-muted"
+                    onClick={() => void loadCategories(true)}
+                    disabled={isLoadingCategories}
+                  >
+                    {isLoadingCategories ? "Loading..." : "Refresh"}
+                  </button>
+                </div>
+                <select
+                  className="input min-h-36"
+                  multiple
+                  value={selectedCategoryIds.map(String)}
+                  onChange={(event) => {
+                    const values = Array.from(event.target.selectedOptions).map(
+                      (option) => Number(option.value),
+                    );
+                    setSelectedCategoryIds(values.filter((value) => Number.isFinite(value)));
+                  }}
+                >
+                  {categories.map((category) => (
+                    <option key={category.id} value={String(category.id)}>
+                      {category.name} (#{category.id})
+                    </option>
+                  ))}
+                </select>
+                <p className="mt-1 text-xs text-slate-500">
+                  Use Ctrl/Cmd click to select multiple categories.
+                </p>
+              </div>
+
+              <div className="md:col-span-2">
+                <label className="label">
+                  Add New Category on Publish (optional)
+                </label>
+                <input
+                  className="input"
+                  placeholder="Example: Tutorials"
+                  value={newCategoryName}
+                  onChange={(event) => setNewCategoryName(event.target.value)}
+                />
+              </div>
+
               <div className="md:col-span-2">
                 <label className="label">SEO Provider</label>
                 <div className="flex flex-wrap gap-4">
@@ -528,6 +645,17 @@ export default function HomePage() {
                   SEO update ({publishResult.seoUpdate.provider}):{" "}
                   {publishResult.seoUpdate.details}
                 </p>
+                {publishResult.categories && publishResult.categories.length > 0 ? (
+                  <p className="mt-1 text-slate-700">
+                    Categories: {publishResult.categories.join(", ")}
+                  </p>
+                ) : null}
+                {publishResult.inlineImages &&
+                publishResult.inlineImages.length > 0 ? (
+                  <p className="mt-1 text-slate-700">
+                    In-post images added: {publishResult.inlineImages.length}
+                  </p>
+                ) : null}
               </div>
             ) : null}
           </div>

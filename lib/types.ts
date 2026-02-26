@@ -1,10 +1,12 @@
 export type SEOProvider = "AIOSEO" | "Yoast" | "None";
 export type PublishStatus = "draft" | "publish";
+export type FollowType = "dofollow" | "nofollow";
 
 export interface HyperlinkInput {
   url: string;
   anchorText: string;
   required: boolean;
+  followType: FollowType;
 }
 
 export interface SocialMeta {
@@ -37,11 +39,22 @@ export interface GenerateArticleResponse {
 export interface PublishRequest {
   title: string;
   html: string;
+  brief?: string;
   excerpt: string;
   status: PublishStatus;
   featuredImageBase64?: string;
   featuredImageMime?: string;
+  inPostImageCount?: number;
+  selectedCategoryIds?: number[];
+  newCategoryName?: string;
   seoProvider: SEOProvider;
   seoPayload: SeoPayload;
+}
+
+export interface InlineGeneratedImage {
+  imageBase64: string;
+  mimeType: string;
+  filenameSuggestion: string;
+  altTextSuggestion: string;
 }
 

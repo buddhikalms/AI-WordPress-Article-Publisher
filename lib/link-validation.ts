@@ -47,3 +47,80 @@ export const validateRequiredLinks = (
   };
 };
 
+const buildExactAnchorRegex = (link: HyperlinkInput) => {
+  const href = escapeRegExp(link.url.trim());
+  const anchorText = escapeRegExp(link.anchorText.trim());
+  const pattern = `<a\\b[^>]*\\bhref\\s*=\\s*(['"])${href}\\1[^>]*>\\s*${anchorText}\\s*<\\/a>`;
+  return new RegExp(pattern, "gi");
+};
+
+export const dedupeRequiredLinksInHtml = (
+  html: string,
+  links: HyperlinkInput[],
+): string => {
+  let nextHtml = html;
+  const requiredLinks = links.filter((link) => link.required);
+
+  for (const link of requiredLinks) {
+    const regex = buildExactAnchorRegex(link);
+    let seen = false;
+    nextHtml = nextHtml.replace(regex, (fullMatch) => {
+      if (!seen) {
+        seen = true;
+        return fullMatch;
+      }
+      return link.anchorText;
+    });
+  }
+
+  return nextHtml;
+};
+
+const normalizeUrlForComparison = (url: string) =>
+  url.trim().replace(/\/+$/, "").toLowerCase();
+
+const getHrefFromAnchorTag = (anchorTag: string): string | null => {
+  const hrefMatch = anchorTag.match(/\bhref\s*=\s*(['"])(.*?)\1/i);
+  return hrefMatch?.[2] ?? null;
+};
+
+const stripAttribute = (anchorTag: string, attribute: string) => {
+  const pattern = new RegExp(
+    `\\s${attribute}\\s*=\\s*(\"[^\"]*\"|'[^']*'|[^\\s>]+)`,
+    "gi",
+  );
+  return anchorTag.replace(pattern, "");
+};
+
+const setAttribute = (anchorTag: string, attribute: string, value: string) => {
+  const withoutAttribute = stripAttribute(anchorTag, attribute);
+  return withoutAttribute.replace(/>$/, ` ${attribute}="${value}">`);
+};
+
+export const enforceLinkPoliciesInHtml = (
+  html: string,
+  links: HyperlinkInput[],
+): string => {
+  const followTypeByUrl = new Map<string, HyperlinkInput["followType"]>();
+  for (const link of links) {
+    followTypeByUrl.set(normalizeUrlForComparison(link.url), link.followType);
+  }
+
+  return html.replace(/<a\b[^>]*>/gi, (anchorTag) => {
+    const href = getHrefFromAnchorTag(anchorTag);
+    if (!href) {
+      return anchorTag;
+    }
+
+    const followType =
+      followTypeByUrl.get(normalizeUrlForComparison(href)) ?? "dofollow";
+
+    let updated = setAttribute(anchorTag, "target", "_blank");
+    const relTokens = ["noopener", "noreferrer"];
+    if (followType === "nofollow") {
+      relTokens.push("nofollow");
+    }
+    updated = setAttribute(updated, "rel", relTokens.join(" "));
+    return updated;
+  });
+};

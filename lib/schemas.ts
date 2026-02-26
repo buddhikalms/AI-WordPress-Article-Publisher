@@ -18,6 +18,7 @@ export const hyperlinkSchema = z.object({
   url: z.string().trim().url("Each hyperlink URL must be valid."),
   anchorText: z.string().trim().min(1, "Anchor text is required."),
   required: z.boolean().default(false),
+  followType: z.enum(["dofollow", "nofollow"]).default("dofollow"),
 });
 
 const keywordsSchema = z
@@ -76,10 +77,14 @@ export const publishRequestSchema = z
   .object({
     title: z.string().trim().min(3),
     html: z.string().trim().min(40),
+    brief: optionalStringSchema,
     excerpt: z.string().trim().min(1),
     status: z.enum(["draft", "publish"]),
     featuredImageBase64: optionalStringSchema,
     featuredImageMime: optionalStringSchema,
+    inPostImageCount: z.coerce.number().int().min(0).max(10).default(0),
+    selectedCategoryIds: z.array(z.coerce.number().int().positive()).default([]),
+    newCategoryName: optionalStringSchema,
     seoProvider: seoProviderSchema,
     seoPayload: seoPayloadSchema,
   })
@@ -91,6 +96,13 @@ export const publishRequestSchema = z
         message: "featuredImageMime is required when featuredImageBase64 is set.",
       });
     }
+    if (value.newCategoryName && value.newCategoryName.length > 80) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["newCategoryName"],
+        message: "New category name must be 80 characters or less.",
+      });
+    }
   });
 
 export type GenerateArticleRequest = z.infer<typeof generateArticleRequestSchema>;
@@ -100,4 +112,3 @@ export type GenerateArticleResponsePayload = z.infer<
 export type GenerateImageRequest = z.infer<typeof generateImageRequestSchema>;
 export type PublishRequestPayload = z.infer<typeof publishRequestSchema>;
 export type SeoProviderInput = z.infer<typeof seoProviderSchema>;
-

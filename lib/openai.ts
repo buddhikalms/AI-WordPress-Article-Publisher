@@ -5,6 +5,7 @@ import {
   type GenerateArticleRequest,
   type GenerateArticleResponsePayload,
 } from "@/lib/schemas";
+import type { InlineGeneratedImage } from "@/lib/types";
 
 const defaultTextModel = process.env.OPENAI_TEXT_MODEL || "gpt-4.1-mini";
 const imageModel = "gpt-image-1";
@@ -176,17 +177,29 @@ export const generateFeaturedImage = async (input: {
   title: string;
   brief: string;
 }) => {
-  const client = getClient();
-  const prompt = [
-    `Create a professional featured image for an article titled "${input.title}".`,
-    `Article brief: ${input.brief}`,
-    "Style: editorial, clean, high-quality, realistic or polished illustration.",
-    "Important: no text overlays, no logos, no watermarks.",
-  ].join(" ");
+  const stem = slugify(input.title) || "featured-image";
+  const image = await generateArticleImage({
+    prompt: [
+      `Create a professional featured image for an article titled "${input.title}".`,
+      `Article brief: ${input.brief}`,
+      "Style: editorial, clean, high-quality, realistic or polished illustration.",
+      "Important: no text overlays, no logos, no watermarks.",
+    ].join(" "),
+  });
 
+  return {
+    imageBase64: image.imageBase64,
+    mimeType: image.mimeType,
+    filenameSuggestion: `${stem}.png`,
+    altTextSuggestion: `Featured image for ${input.title}`,
+  };
+};
+
+const generateArticleImage = async (input: { prompt: string }) => {
+  const client = getClient();
   const image = await client.images.generate({
     model: imageModel,
-    prompt,
+    prompt: input.prompt,
     size: "1536x1024",
   });
 
@@ -195,12 +208,42 @@ export const generateFeaturedImage = async (input: {
     throw new HttpError(502, "OpenAI image response did not contain base64 data.");
   }
 
-  const stem = slugify(input.title) || "featured-image";
   return {
     imageBase64,
     mimeType: "image/png",
-    filenameSuggestion: `${stem}.png`,
-    altTextSuggestion: `Featured image for ${input.title}`,
   };
 };
 
+export const generateInlineArticleImages = async (input: {
+  title: string;
+  brief: string;
+  count: number;
+}): Promise<InlineGeneratedImage[]> => {
+  if (input.count <= 0) {
+    return [];
+  }
+
+  const stem = slugify(input.title) || "article";
+  const images: InlineGeneratedImage[] = [];
+
+  for (let index = 1; index <= input.count; index += 1) {
+    const generated = await generateArticleImage({
+      prompt: [
+        `Create in-article supporting image ${index} for an article titled "${input.title}".`,
+        `Article brief: ${input.brief}`,
+        `Visual variation ${index} of ${input.count}.`,
+        "Style: professional editorial, consistent with a business/tech blog.",
+        "Important: no text overlays, no logos, no watermarks.",
+      ].join(" "),
+    });
+
+    images.push({
+      imageBase64: generated.imageBase64,
+      mimeType: generated.mimeType,
+      filenameSuggestion: `${stem}-inline-${index}.png`,
+      altTextSuggestion: `In-article visual ${index} for ${input.title}`,
+    });
+  }
+
+  return images;
+};

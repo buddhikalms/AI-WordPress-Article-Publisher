@@ -11,6 +11,7 @@ const createEmptyLink = (): HyperlinkInput => ({
   url: "",
   anchorText: "",
   required: false,
+  followType: "dofollow",
 });
 
 export default function LinkTable({ links, onChange }: LinkTableProps) {
@@ -35,6 +36,10 @@ export default function LinkTable({ links, onChange }: LinkTableProps) {
           Add Link
         </button>
       </div>
+      <p className="mb-3 text-xs text-slate-500">
+        All links are published with <code>target=&quot;_blank&quot;</code>. Set
+        dofollow/nofollow per link below.
+      </p>
 
       <div className="overflow-x-auto">
         <table className="min-w-full border-collapse text-sm">
@@ -42,6 +47,7 @@ export default function LinkTable({ links, onChange }: LinkTableProps) {
             <tr className="border-b border-slate-200 text-left text-slate-600">
               <th className="px-2 py-2 font-semibold">URL</th>
               <th className="px-2 py-2 font-semibold">Anchor Text</th>
+              <th className="px-2 py-2 font-semibold">Follow</th>
               <th className="px-2 py-2 font-semibold">Required</th>
               <th className="px-2 py-2 font-semibold">Action</th>
             </tr>
@@ -49,7 +55,7 @@ export default function LinkTable({ links, onChange }: LinkTableProps) {
           <tbody>
             {links.length === 0 ? (
               <tr>
-                <td colSpan={4} className="px-2 py-4 text-slate-500">
+                <td colSpan={5} className="px-2 py-4 text-slate-500">
                   No links added yet.
                 </td>
               </tr>
@@ -78,6 +84,20 @@ export default function LinkTable({ links, onChange }: LinkTableProps) {
                         updateRow(index, { anchorText: event.target.value })
                       }
                     />
+                  </td>
+                  <td className="px-2 py-2 align-top">
+                    <select
+                      className="select min-w-28"
+                      value={link.followType}
+                      onChange={(event) =>
+                        updateRow(index, {
+                          followType: event.target.value as HyperlinkInput["followType"],
+                        })
+                      }
+                    >
+                      <option value="dofollow">Do follow</option>
+                      <option value="nofollow">No follow</option>
+                    </select>
                   </td>
                   <td className="px-2 py-2 align-top">
                     <label className="inline-flex items-center gap-2 text-slate-700">

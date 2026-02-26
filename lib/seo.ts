@@ -36,6 +36,11 @@ export const mapToAioseoMetaData = (
     title: seo.seoTitle,
     description: seo.metaDescription,
     focus_keyphrase: seo.focusKeyword,
+    focus_keyword: seo.focusKeyword,
+    og_title: seo.og.title,
+    og_description: seo.og.description,
+    twitter_title: seo.twitter.title,
+    twitter_description: seo.twitter.description,
     social: {
       facebook: {
         title: seo.og.title,
@@ -61,6 +66,39 @@ export const mapToAioseoMetaData = (
   }
 
   return payload;
+};
+
+export const mapToAioseoFallbackMeta = (
+  seo: SeoPayload,
+  featuredImageUrl?: string,
+): Record<string, string> => {
+  const ogImage = getResolvedImage(seo.og.imageUrl, featuredImageUrl);
+  const twitterImage = getResolvedImage(
+    seo.twitter.imageUrl,
+    featuredImageUrl,
+  );
+
+  const meta: Record<string, string> = {
+    _aioseo_title: seo.seoTitle,
+    _aioseo_description: seo.metaDescription,
+    _aioseo_focus_keyphrase: seo.focusKeyword,
+    _aioseo_og_title: seo.og.title,
+    _aioseo_og_description: seo.og.description,
+    _aioseo_twitter_title: seo.twitter.title,
+    _aioseo_twitter_description: seo.twitter.description,
+  };
+
+  if (seo.canonicalUrl) {
+    meta._aioseo_canonical_url = seo.canonicalUrl;
+  }
+  if (ogImage && isAbsoluteUrl(ogImage)) {
+    meta._aioseo_og_image = ogImage;
+  }
+  if (twitterImage && isAbsoluteUrl(twitterImage)) {
+    meta._aioseo_twitter_image = twitterImage;
+  }
+
+  return meta;
 };
 
 export const mapToYoastMeta = (
@@ -121,4 +159,3 @@ export const getProviderPayloadPreview = (
     note: "SEO updates are disabled when provider is None.",
   };
 };
-

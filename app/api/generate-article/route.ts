@@ -1,6 +1,10 @@
 import { NextResponse } from "next/server";
 import { toErrorResponse } from "@/lib/errors";
-import { validateRequiredLinks } from "@/lib/link-validation";
+import {
+  dedupeRequiredLinksInHtml,
+  enforceLinkPoliciesInHtml,
+  validateRequiredLinks,
+} from "@/lib/link-validation";
 import { generateArticleDraft } from "@/lib/openai";
 import { generateArticleRequestSchema } from "@/lib/schemas";
 
@@ -21,6 +25,15 @@ export async function POST(request: Request) {
     }
 
     const generated = await generateArticleDraft(validation.data);
+    generated.html = dedupeRequiredLinksInHtml(
+      generated.html,
+      validation.data.links,
+    );
+    generated.html = enforceLinkPoliciesInHtml(
+      generated.html,
+      validation.data.links,
+    );
+
     const linkValidation = validateRequiredLinks(
       generated.html,
       validation.data.links,
@@ -46,4 +59,3 @@ export async function POST(request: Request) {
     return toErrorResponse(error, "Failed to generate article draft.");
   }
 }
-

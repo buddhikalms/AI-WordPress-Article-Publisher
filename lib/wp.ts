@@ -24,6 +24,13 @@ interface WpPostResponse {
   status: string;
 }
 
+export interface WpCategory {
+  id: number;
+  name: string;
+  slug: string;
+  count?: number;
+}
+
 const getWpConfig = (): WpConfig => {
   const baseUrl = process.env.WORDPRESS_BASE_URL?.trim();
   const username = process.env.WORDPRESS_USERNAME?.trim();
@@ -196,8 +203,12 @@ export const uploadFeaturedMedia = async (params: {
   imageBase64: string;
   mimeType: string;
   title: string;
+  filenameSuggestion?: string;
+  altText?: string;
 }) => {
-  const filenameStem = sanitizeFilename(params.title) || "featured-image";
+  const filenameInput =
+    params.filenameSuggestion?.replace(/\.[a-z0-9]+$/i, "") || params.title;
+  const filenameStem = sanitizeFilename(filenameInput) || "featured-image";
   const extension = extensionFromMime(params.mimeType);
   const filename = `${filenameStem}.${extension}`;
   const cleanedBase64 = params.imageBase64.replace(
@@ -210,11 +221,29 @@ export const uploadFeaturedMedia = async (params: {
   headers.set("Content-Disposition", `attachment; filename="${filename}"`);
   headers.set("Content-Type", params.mimeType);
 
-  return wpRequest<WpMediaResponse>("/wp-json/wp/v2/media", {
+  const uploaded = await wpRequest<WpMediaResponse>("/wp-json/wp/v2/media", {
     method: "POST",
     headers,
     body: bytes,
   });
+
+  if (params.altText?.trim()) {
+    try {
+      await wpRequest<Record<string, unknown>>(
+        `/wp-json/wp/v2/media/${uploaded.id}`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            alt_text: params.altText.trim(),
+          }),
+        },
+      );
+    } catch {
+      // Keep upload successful even if alt text update is blocked.
+    }
+  }
+
+  return uploaded;
 };
 
 export const createPost = async (payload: {
@@ -223,6 +252,7 @@ export const createPost = async (payload: {
   status: "draft" | "publish";
   excerpt: string;
   featuredMediaId?: number;
+  categories?: number[];
 }) => {
   const body: Record<string, unknown> = {
     title: payload.title,
@@ -232,6 +262,9 @@ export const createPost = async (payload: {
   };
   if (payload.featuredMediaId) {
     body.featured_media = payload.featuredMediaId;
+  }
+  if (payload.categories && payload.categories.length > 0) {
+    body.categories = payload.categories;
   }
 
   return wpRequest<WpPostResponse>("/wp-json/wp/v2/posts", {
@@ -260,4 +293,39 @@ export const getSeoDiagnosticPosts = async () => {
   const query =
     "/wp-json/wp/v2/posts?per_page=1&context=edit&_fields=id,title,meta,aioseo_head,aioseo_meta_data";
   return wpRequest<Array<Record<string, unknown>>>(query, { method: "GET" });
+};
+
+export const listCategories = async () => {
+  const query =
+    "/wp-json/wp/v2/categories?per_page=100&orderby=name&order=asc&context=edit&_fields=id,name,slug,count";
+  return wpRequest<WpCategory[]>(query, { method: "GET" });
+};
+
+export const getCategoryByName = async (name: string) => {
+  const query = `/wp-json/wp/v2/categories?search=${encodeURIComponent(name)}&per_page=100&context=edit&_fields=id,name,slug,count`;
+  const results = await wpRequest<WpCategory[]>(query, { method: "GET" });
+  const needle = name.trim().toLowerCase();
+  return (
+    results.find((category) => category.name.trim().toLowerCase() === needle) ||
+    null
+  );
+};
+
+export const createCategory = async (name: string) => {
+  return wpRequest<WpCategory>("/wp-json/wp/v2/categories", {
+    method: "POST",
+    body: JSON.stringify({ name: name.trim() }),
+  });
+};
+
+export const ensureCategory = async (name: string) => {
+  const normalized = name.trim();
+  if (!normalized) {
+    throw new HttpError(400, "Category name cannot be empty.");
+  }
+  const existing = await getCategoryByName(normalized);
+  if (existing) {
+    return existing;
+  }
+  return createCategory(normalized);
 };
