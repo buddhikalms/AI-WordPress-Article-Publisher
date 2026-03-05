@@ -2,12 +2,17 @@ import { NextResponse } from "next/server";
 import { getErrorMessage } from "@/lib/errors";
 import { seoProviderSchema } from "@/lib/schemas";
 import { getSeoDiagnosticPosts } from "@/lib/wp";
+import { requireVerifiedUser } from "@/lib/auth-session";
+import { getUserWordPressConfig } from "@/lib/user-wordpress";
 
 export const runtime = "nodejs";
 
 export async function GET(request: Request) {
   try {
+    const user = await requireVerifiedUser(request);
     const url = new URL(request.url);
+    const siteId = url.searchParams.get("siteId") || undefined;
+    const wpConfig = await getUserWordPressConfig(user.id, siteId);
     const providerInput = url.searchParams.get("provider") ?? "None";
     const providerValidation = seoProviderSchema.safeParse(providerInput);
 
@@ -24,7 +29,7 @@ export async function GET(request: Request) {
     const provider = providerValidation.data;
 
     if (provider === "AIOSEO") {
-      const posts = await getSeoDiagnosticPosts();
+      const posts = await getSeoDiagnosticPosts(wpConfig);
       const sample = posts[0];
       if (!sample) {
         return NextResponse.json({
@@ -73,4 +78,3 @@ export async function GET(request: Request) {
     );
   }
 }
-

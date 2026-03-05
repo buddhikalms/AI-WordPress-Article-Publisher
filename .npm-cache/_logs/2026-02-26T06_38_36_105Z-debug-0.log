@@ -1,0 +1,67 @@
+0 verbose cli F:\Node\node.exe F:\Node\node_modules\npm\bin\npm-cli.js
+1 info using npm@11.6.2
+2 info using node@v24.12.0
+3 silly config load:file:F:\Node\node_modules\npm\npmrc
+4 silly config load:file:F:\2026 - resell\AI article Publisher\.npmrc
+5 silly config load:file:C:\Users\Buddhika\.npmrc
+6 silly config load:file:C:\Users\Buddhika\AppData\Roaming\npm\etc\npmrc
+7 verbose title npm install prisma@7.4.1 @prisma/client@7.4.1 @prisma/adapter-mariadb@7.4.1 dotenv@latest
+8 verbose argv "install" "prisma@7.4.1" "@prisma/client@7.4.1" "@prisma/adapter-mariadb@7.4.1" "dotenv@latest" "--no-audit" "--no-fund"
+9 verbose logfile logs-max:10 dir:f:\2026 - resell\AI article Publisher\.npm-cache\_logs\2026-02-26T06_38_36_105Z-
+10 verbose logfile f:\2026 - resell\AI article Publisher\.npm-cache\_logs\2026-02-26T06_38_36_105Z-debug-0.log
+11 silly logfile done cleaning log files
+12 silly packumentCache heap:4496293888 maxSize:1124073472 maxEntrySize:562036736
+13 verbose shrinkwrap failed to load node_modules/.package-lock.json out of date, updated: node_modules
+14 silly packumentCache corgi:https://registry.npmjs.org/dotenv cache-miss
+15 http fetch GET 200 https://registry.npmjs.org/dotenv 664ms (cache miss)
+16 verbose type system
+17 verbose stack FetchError: Invalid response body while trying to fetch https://registry.npmjs.org/dotenv: EPERM: operation not permitted, unlink 'f:\2026 - resell\AI article Publisher\.npm-cache\_cacache\tmp\28cbc2f5'
+17 verbose stack     at F:\Node\node_modules\npm\node_modules\minipass-fetch\lib\body.js:170:15
+17 verbose stack     at async Response.json (F:\Node\node_modules\npm\node_modules\minipass-fetch\lib\body.js:75:17)
+17 verbose stack     at async RegistryFetcher.packument (F:\Node\node_modules\npm\node_modules\pacote\lib\registry.js:98:25)
+17 verbose stack     at async RegistryFetcher.manifest (F:\Node\node_modules\npm\node_modules\pacote\lib\registry.js:128:23)
+17 verbose stack     at async F:\Node\node_modules\npm\node_modules\@npmcli\arborist\lib\arborist\build-ideal-tree.js:539:22
+17 verbose stack     at async Promise.all (index 3)
+17 verbose stack     at async #add (F:\Node\node_modules\npm\node_modules\@npmcli\arborist\lib\arborist\build-ideal-tree.js:528:5)
+17 verbose stack     at async #applyUserRequestsToNode (F:\Node\node_modules\npm\node_modules\@npmcli\arborist\lib\arborist\build-ideal-tree.js:497:7)
+17 verbose stack     at async #applyUserRequests (F:\Node\node_modules\npm\node_modules\@npmcli\arborist\lib\arborist\build-ideal-tree.js:433:7)
+17 verbose stack     at async Arborist.buildIdealTree (F:\Node\node_modules\npm\node_modules\@npmcli\arborist\lib\arborist\build-ideal-tree.js:181:7)
+18 error code EPERM
+19 error syscall unlink
+20 error path f:\2026 - resell\AI article Publisher\.npm-cache\_cacache\tmp\28cbc2f5
+21 error errno EPERM
+22 error FetchError: Invalid response body while trying to fetch https://registry.npmjs.org/dotenv: EPERM: operation not permitted, unlink 'f:\2026 - resell\AI article Publisher\.npm-cache\_cacache\tmp\28cbc2f5'
+22 error     at F:\Node\node_modules\npm\node_modules\minipass-fetch\lib\body.js:170:15
+22 error     at async Response.json (F:\Node\node_modules\npm\node_modules\minipass-fetch\lib\body.js:75:17)
+22 error     at async RegistryFetcher.packument (F:\Node\node_modules\npm\node_modules\pacote\lib\registry.js:98:25)
+22 error     at async RegistryFetcher.manifest (F:\Node\node_modules\npm\node_modules\pacote\lib\registry.js:128:23)
+22 error     at async F:\Node\node_modules\npm\node_modules\@npmcli\arborist\lib\arborist\build-ideal-tree.js:539:22
+22 error     at async Promise.all (index 3)
+22 error     at async #add (F:\Node\node_modules\npm\node_modules\@npmcli\arborist\lib\arborist\build-ideal-tree.js:528:5)
+22 error     at async #applyUserRequestsToNode (F:\Node\node_modules\npm\node_modules\@npmcli\arborist\lib\arborist\build-ideal-tree.js:497:7)
+22 error     at async #applyUserRequests (F:\Node\node_modules\npm\node_modules\@npmcli\arborist\lib\arborist\build-ideal-tree.js:433:7)
+22 error     at async Arborist.buildIdealTree (F:\Node\node_modules\npm\node_modules\@npmcli\arborist\lib\arborist\build-ideal-tree.js:181:7) {
+22 error   code: 'EPERM',
+22 error   errno: 'EPERM',
+22 error   syscall: 'unlink',
+22 error   path: 'f:\\2026 - resell\\AI article Publisher\\.npm-cache\\_cacache\\tmp\\28cbc2f5',
+22 error   type: 'system'
+22 error }
+23 error
+23 error The operation was rejected by your operating system.
+23 error It's possible that the file was already in use (by a text editor or antivirus),
+23 error or that you lack permissions to access it.
+23 error
+23 error If you believe this might be a permissions issue, please double-check the
+23 error permissions of the file and its containing directories, or try running
+23 error the command again as root/Administrator.
+24 silly unfinished npm timer reify 1772087917129
+25 silly unfinished npm timer reify:loadTrees 1772087917130
+26 silly unfinished npm timer idealTree:userRequests 1772087917371
+27 verbose cwd F:\2026 - resell\AI article Publisher
+28 verbose os Windows_NT 10.0.19045
+29 verbose node v24.12.0
+30 verbose npm  v11.6.2
+31 verbose exit 1
+32 verbose code 1
+33 error A complete log of this run can be found in: f:\2026 - resell\AI article Publisher\.npm-cache\_logs\2026-02-26T06_38_36_105Z-debug-0.log

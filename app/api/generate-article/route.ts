@@ -1,17 +1,24 @@
 import { NextResponse } from "next/server";
-import { toErrorResponse } from "@/lib/errors";
+import { TokenReason } from "@prisma/client";
+import { HttpError, toErrorResponse } from "@/lib/errors";
 import {
   dedupeRequiredLinksInHtml,
   enforceLinkPoliciesInHtml,
   validateRequiredLinks,
 } from "@/lib/link-validation";
 import { generateArticleDraft } from "@/lib/openai";
+import { requireVerifiedUser } from "@/lib/auth-session";
 import { generateArticleRequestSchema } from "@/lib/schemas";
+import { consumeTokens, TOKEN_COSTS } from "@/lib/tokens";
 
 export const runtime = "nodejs";
 
 export async function POST(request: Request) {
   try {
+    const user = await requireVerifiedUser(request);
+    if (user.tokenBalance < TOKEN_COSTS.ARTICLE_GENERATION) {
+      throw new HttpError(402, "Insufficient tokens. Please buy a package.");
+    }
     const json = await request.json();
     const validation = generateArticleRequestSchema.safeParse(json);
     if (!validation.success) {
@@ -54,7 +61,27 @@ export async function POST(request: Request) {
       );
     }
 
-    return NextResponse.json(generated);
+    const requestId =
+      request.headers.get("x-request-id") || crypto.randomUUID();
+
+    const tokenCharge = await consumeTokens({
+      userId: user.id,
+      amount: TOKEN_COSTS.ARTICLE_GENERATION,
+      reason: TokenReason.ARTICLE_GENERATION,
+      action: "ARTICLE_GENERATION",
+      description: `Article generation for "${validation.data.title}"`,
+      requestId: `article:${requestId}`,
+      referenceType: "article_generation",
+    });
+
+    return NextResponse.json({
+      ...generated,
+      tokenCharge: {
+        charged: tokenCharge.charged,
+        amount: TOKEN_COSTS.ARTICLE_GENERATION,
+        remaining: tokenCharge.tokenBalance,
+      },
+    });
   } catch (error) {
     return toErrorResponse(error, "Failed to generate article draft.");
   }

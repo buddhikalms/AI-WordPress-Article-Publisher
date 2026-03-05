@@ -1,85 +1,118 @@
-# AI WordPress Article Publisher
+# AI Article Publisher (SaaS Edition)
 
-Next.js App Router project that:
-- Generates WordPress-ready article HTML with OpenAI chat.
-- Enforces required hyperlinks.
-- Generates a featured image with OpenAI image generation.
-- Publishes to WordPress via REST API (draft/publish).
-- Applies SEO metadata best-effort for AIOSEO or Yoast.
+Next.js + Prisma + MySQL platform for AI-assisted WordPress publishing with:
 
-## 1) Environment setup
+- User registration + credentials login
+- Google OAuth login (NextAuth)
+- Email verification (SMTP / Gmail app password)
+- Multi-site WordPress management per user with a default publishing site
+- Token-based usage billing
+- Stripe package checkout + webhook token credit
+- Admin panel for users, packages, and token adjustments
+- Device lock (one account per device, one device per account)
+- Manual post status control (draft, publish now, schedule)
+- Import posts from a Google Doc link only, generating missing featured images and SEO fields when needed
+- Category news auto-publish pipeline from NewsData API with OpenAI rewrite + fresh image generation
 
-Copy `.env.example` to `.env.local` and set:
+## Tech stack
 
-```bash
-OPENAI_API_KEY=
-OPENAI_TEXT_MODEL=gpt-4.1-mini
-WORDPRESS_BASE_URL=https://your-site.com
-WORDPRESS_USERNAME=your-wp-username
-WORDPRESS_APP_PASSWORD=xxxx xxxx xxxx xxxx xxxx xxxx
-```
+- Next.js 14 (App Router)
+- Prisma ORM + MySQL
+- NextAuth (credentials + Google)
+- Stripe
+- OpenAI
 
-Notes:
-- Use a WordPress Application Password for `WORDPRESS_APP_PASSWORD`.
-- Do not expose these values in the browser; they are server-only in route handlers.
+## Environment
 
-## 2) Install and run
+Copy `.env.example` to `.env` and set values.
+
+Required variables:
+
+- `DATABASE_URL`
+- `APP_ENCRYPTION_KEY`
+- `NEXTAUTH_SECRET`
+- `NEXTAUTH_URL`
+- `NEXT_PUBLIC_APP_URL`
+- `OPENAI_API_KEY`
+- `NEWSDATA_API_KEY`
+- `GOOGLE_CLIENT_ID`
+- `GOOGLE_CLIENT_SECRET`
+- `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `SMTP_FROM`
+- `STRIPE_SECRET_KEY`
+- `STRIPE_WEBHOOK_SECRET`
+
+Optional:
+
+- `ADMIN_EMAILS` (comma-separated emails promoted to admin at sign-in)
+- `NEWSDATA_BASE_URL` (defaults to `https://newsdata.io/api/1/news`)
+
+## Install and run
 
 ```bash
 npm install
+npx prisma generate
+npx prisma migrate deploy
 npm run dev
 ```
 
-Open: `http://localhost:3000`
+Open `http://localhost:3000`.
 
-## 3) Main flow
+## Auth flows
 
-1. Fill article inputs and links.
-2. Click **Generate Draft** to create HTML + SEO payload.
-3. Optionally click **Generate Image**.
-4. Click **Publish as Draft**.
+- `GET/POST /api/auth/[...nextauth]` NextAuth (credentials + Google)
+- `POST /api/auth/register` register user + optional first WordPress site + device bind + email code
+- `POST /api/auth/verify-email` verify 6-digit code
+- `POST /api/auth/resend-code` resend verification code
 
-The app will:
-1. Optionally upload featured image (`/wp-json/wp/v2/media`)
-2. Create post (`/wp-json/wp/v2/posts`)
-3. Apply SEO metadata by provider (best-effort)
+Credentials login is blocked until email verification is completed.
 
-## 4) Diagnostics endpoints
+## Billing flows
 
-- `GET /api/wp-health`
-  - Verifies WordPress auth via `/wp-json/wp/v2/users/me`
+- `GET /api/packages` list active plans
+- `POST /api/stripe/checkout` create checkout session
+- `POST /api/stripe/webhook` credit tokens after successful payment
 
-- `GET /api/seo-health?provider=AIOSEO`
-  - Checks whether AIOSEO-related fields appear in a post REST response.
+## Token costs
 
-- `GET /api/seo-health?provider=Yoast`
-  - Returns guidance that Yoast meta keys may need REST registration.
+Configured in `lib/tokens.ts`:
 
-## 5) AIOSEO vs Yoast testing
+- Article generation: `5`
+- Image generation: `2`
+- Publish to WordPress: `1`
 
-### AIOSEO
-1. In UI set provider to `AIOSEO`.
-2. Publish a draft.
-3. If SEO update fails with 400/403:
-   - Ensure AIOSEO REST API addon is installed/enabled.
-   - Ensure WP user has permissions to edit SEO metadata.
+## User pages
 
-### Yoast
-1. In UI set provider to `Yoast`.
-2. Publish a draft.
-3. If meta update fails:
-   - Install this MU-plugin file:
-     - `wp-snippets/yoast-rest-meta.php`
-     - destination: `wp-content/mu-plugins/yoast-rest-meta.php`
-   - Retry publish/update.
+- `/login` sign-in, registration, email verification
+- `/` article workspace (manual publish/schedule + Google Doc import + category news auto-publish)
+- `/account` manage multiple WordPress sites and the default publishing target
+- `/billing` packages and purchase history
 
-## 6) File highlights
+## Admin page
 
-- `app/page.tsx` - single-page UI
-- `app/api/generate-article/route.ts` - article generation + required link enforcement
-- `app/api/generate-image/route.ts` - image generation
-- `app/api/publish/route.ts` - WP media + post + provider SEO update
-- `lib/wp.ts` - WordPress REST helpers
-- `lib/seo.ts` - AIOSEO/Yoast payload mapping
-- `wp-snippets/yoast-rest-meta.php` - Yoast REST meta registration helper
+- `/admin`
 
+Admin APIs:
+
+- `GET/POST/PUT /api/admin/packages`
+- `GET /api/admin/users`
+- `POST /api/admin/tokens`
+
+## Prisma models
+
+See `prisma/schema.prisma` for:
+
+- `User`, `Account`, `Session`, `VerificationToken`
+- `WordPressCredential` (multi-site per user)
+- `DeviceRegistration`
+- `Package`, `PackagePurchase`
+- `TokenTransaction`, `GenerationUsage`
+- `EmailVerificationCode`
+
+## Important notes
+
+- Prisma 7 is configured via `prisma.config.ts` (datasource URL is not in `schema.prisma`).
+- Prisma Client uses `@prisma/adapter-mariadb` in `lib/prisma.ts`.
+- Stripe webhook must be configured to call `/api/stripe/webhook`.
+- WordPress credentials are encrypted before storing in DB.
+- The project currently expects dependencies to be installable from npm registry.
+- Google Docs import reads from a shareable document link. If a doc is private, switch it to "Anyone with the link can view" or use "Publish to web".

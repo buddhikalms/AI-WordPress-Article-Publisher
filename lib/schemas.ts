@@ -13,6 +13,7 @@ const optionalUrlSchema = z.preprocess(
 );
 
 export const seoProviderSchema = z.enum(["AIOSEO", "Yoast", "None"]);
+export const publishStatusSchema = z.enum(["draft", "publish", "future"]);
 
 export const hyperlinkSchema = z.object({
   url: z.string().trim().url("Each hyperlink URL must be valid."),
@@ -73,13 +74,25 @@ const optionalStringSchema = z.preprocess(
   z.string().trim().optional(),
 );
 
+const optionalIdSchema = z.preprocess(
+  emptyToUndefined,
+  z.string().trim().min(1).optional(),
+);
+
+const optionalDateTimeSchema = z.preprocess(
+  emptyToUndefined,
+  z.string().datetime({ offset: true }).optional(),
+);
+
 export const publishRequestSchema = z
   .object({
+    siteId: optionalIdSchema,
     title: z.string().trim().min(3),
     html: z.string().trim().min(40),
     brief: optionalStringSchema,
     excerpt: z.string().trim().min(1),
-    status: z.enum(["draft", "publish"]),
+    status: publishStatusSchema,
+    scheduledAt: optionalDateTimeSchema,
     featuredImageBase64: optionalStringSchema,
     featuredImageMime: optionalStringSchema,
     inPostImageCount: z.coerce.number().int().min(0).max(10).default(0),
@@ -103,6 +116,165 @@ export const publishRequestSchema = z
         message: "New category name must be 80 characters or less.",
       });
     }
+    if (value.status === "future" && !value.scheduledAt) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["scheduledAt"],
+        message: "scheduledAt is required when status is future.",
+      });
+    }
+    if (value.status !== "future" && value.scheduledAt) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["scheduledAt"],
+        message: "scheduledAt is only allowed when status is future.",
+      });
+    }
+    if (value.scheduledAt) {
+      const scheduleDate = new Date(value.scheduledAt);
+      if (Number.isNaN(scheduleDate.getTime())) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["scheduledAt"],
+          message: "scheduledAt must be a valid ISO datetime.",
+        });
+      } else if (scheduleDate.getTime() <= Date.now()) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["scheduledAt"],
+          message: "scheduledAt must be in the future.",
+        });
+      }
+    }
+  });
+
+export const googleDocImportRequestSchema = z
+  .object({
+    siteId: optionalIdSchema,
+    document: z.string().trim().min(3, "Google Doc URL or ID is required."),
+    status: publishStatusSchema.default("draft"),
+    scheduledAt: optionalDateTimeSchema,
+    selectedCategoryIds: z.array(z.coerce.number().int().positive()).default([]),
+    newCategoryName: optionalStringSchema,
+    seoProvider: seoProviderSchema.default("None"),
+  })
+  .superRefine((value, context) => {
+    if (value.status === "future" && !value.scheduledAt) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["scheduledAt"],
+        message: "scheduledAt is required when status is future.",
+      });
+    }
+    if (value.status !== "future" && value.scheduledAt) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["scheduledAt"],
+        message: "scheduledAt is only allowed when status is future.",
+      });
+    }
+    if (value.newCategoryName && value.newCategoryName.length > 80) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["newCategoryName"],
+        message: "New category name must be 80 characters or less.",
+      });
+    }
+    if (value.scheduledAt) {
+      const scheduleDate = new Date(value.scheduledAt);
+      if (Number.isNaN(scheduleDate.getTime())) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["scheduledAt"],
+          message: "scheduledAt must be a valid ISO datetime.",
+        });
+      } else if (scheduleDate.getTime() <= Date.now()) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["scheduledAt"],
+          message: "scheduledAt must be in the future.",
+        });
+      }
+    }
+  });
+
+export const newsCategorySchema = z.enum([
+  "business",
+  "entertainment",
+  "environment",
+  "food",
+  "health",
+  "politics",
+  "science",
+  "sports",
+  "technology",
+  "top",
+  "tourism",
+  "world",
+]);
+
+export const newsAutoPublishRequestSchema = z
+  .object({
+    siteId: optionalIdSchema,
+    category: newsCategorySchema,
+    query: optionalStringSchema,
+    language: z.preprocess(
+      emptyToUndefined,
+      z
+        .string()
+        .trim()
+        .min(2, "Language must be at least 2 characters.")
+        .max(10, "Language code must be 10 characters or less.")
+        .optional(),
+    ),
+    maxArticles: z.coerce.number().int().min(1).max(5).default(1),
+    tone: z.string().trim().min(1).default("Professional"),
+    wordCount: z.coerce.number().int().min(300).max(5000).default(1200),
+    status: publishStatusSchema.default("publish"),
+    scheduledAt: optionalDateTimeSchema,
+    selectedCategoryIds: z.array(z.coerce.number().int().positive()).default([]),
+    newCategoryName: optionalStringSchema,
+    inPostImageCount: z.coerce.number().int().min(0).max(10).default(0),
+    seoProvider: seoProviderSchema.default("None"),
+  })
+  .superRefine((value, context) => {
+    if (value.status === "future" && !value.scheduledAt) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["scheduledAt"],
+        message: "scheduledAt is required when status is future.",
+      });
+    }
+    if (value.status !== "future" && value.scheduledAt) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["scheduledAt"],
+        message: "scheduledAt is only allowed when status is future.",
+      });
+    }
+    if (value.newCategoryName && value.newCategoryName.length > 80) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["newCategoryName"],
+        message: "New category name must be 80 characters or less.",
+      });
+    }
+    if (value.scheduledAt) {
+      const scheduleDate = new Date(value.scheduledAt);
+      if (Number.isNaN(scheduleDate.getTime())) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["scheduledAt"],
+          message: "scheduledAt must be a valid ISO datetime.",
+        });
+      } else if (scheduleDate.getTime() <= Date.now()) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["scheduledAt"],
+          message: "scheduledAt must be in the future.",
+        });
+      }
+    }
   });
 
 export type GenerateArticleRequest = z.infer<typeof generateArticleRequestSchema>;
@@ -111,4 +283,10 @@ export type GenerateArticleResponsePayload = z.infer<
 >;
 export type GenerateImageRequest = z.infer<typeof generateImageRequestSchema>;
 export type PublishRequestPayload = z.infer<typeof publishRequestSchema>;
+export type GoogleDocImportRequestPayload = z.infer<
+  typeof googleDocImportRequestSchema
+>;
+export type NewsAutoPublishRequestPayload = z.infer<
+  typeof newsAutoPublishRequestSchema
+>;
 export type SeoProviderInput = z.infer<typeof seoProviderSchema>;

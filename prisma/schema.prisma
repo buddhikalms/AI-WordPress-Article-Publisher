@@ -1,0 +1,207 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+}
+
+enum UserRole {
+  USER
+  ADMIN
+}
+
+enum PurchaseStatus {
+  PENDING
+  PAID
+  FAILED
+  REFUNDED
+}
+
+enum TokenReason {
+  PACKAGE_PURCHASE
+  ARTICLE_GENERATION
+  IMAGE_GENERATION
+  PUBLISH_POST
+  ADMIN_ADJUSTMENT
+}
+
+enum UsageAction {
+  ARTICLE_GENERATION
+  IMAGE_GENERATION
+  PUBLISH_POST
+}
+
+model User {
+  id                String                 @id @default(cuid())
+  name              String?
+  email             String?                @unique
+  emailVerified     DateTime?
+  image             String?
+  passwordHash      String?
+  role              UserRole               @default(USER)
+  tokenBalance      Int                    @default(0)
+  createdAt         DateTime               @default(now())
+  updatedAt         DateTime               @updatedAt
+
+  accounts          Account[]
+  sessions          Session[]
+
+  wordpressSites     WordPressCredential[]
+  deviceRegistration DeviceRegistration?
+  packagePurchases   PackagePurchase[]
+  tokenTransactions  TokenTransaction[]
+  generationUsages   GenerationUsage[]
+  emailVerifications EmailVerificationCode[]
+}
+
+model WordPressCredential {
+  id                   String   @id @default(cuid())
+  userId               String
+  name                 String
+  baseUrl              String
+  username             String
+  appPasswordEncrypted String
+  isDefault            Boolean  @default(false)
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, baseUrl])
+  @@index([userId, isDefault])
+}
+
+model DeviceRegistration {
+  id         String   @id @default(cuid())
+  userId     String   @unique
+  deviceId   String   @unique
+  userAgent  String?
+  createdAt  DateTime @default(now())
+  lastSeenAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model Package {
+  id              String            @id @default(cuid())
+  name            String
+  slug            String            @unique
+  description     String?           @db.Text
+  featureList     Json?
+  priceCents      Int
+  currency        String            @default("usd")
+  tokenAmount     Int
+  stripeProductId String?
+  stripePriceId   String?           @unique
+  isActive        Boolean           @default(true)
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+
+  packagePurchases PackagePurchase[]
+}
+
+model PackagePurchase {
+  id                      String         @id @default(cuid())
+  userId                  String
+  packageId               String
+  status                  PurchaseStatus @default(PENDING)
+  tokensGranted           Int
+  amountCents             Int
+  currency                String         @default("usd")
+  stripeCheckoutSessionId String?        @unique
+  stripePaymentIntentId   String?
+  metadata                Json?
+  createdAt               DateTime       @default(now())
+  updatedAt               DateTime       @updatedAt
+
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  package Package @relation(fields: [packageId], references: [id], onDelete: Restrict)
+
+  @@index([userId, createdAt])
+  @@index([packageId, createdAt])
+}
+
+model TokenTransaction {
+  id            String      @id @default(cuid())
+  userId        String
+  amount        Int
+  balanceAfter  Int
+  reason        TokenReason
+  description   String?     @db.Text
+  referenceType String?
+  referenceId   String?
+  createdAt     DateTime    @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@index([referenceType, referenceId])
+}
+
+model GenerationUsage {
+  id          String      @id @default(cuid())
+  userId      String
+  action      UsageAction
+  tokensSpent Int
+  requestId   String?     @unique
+  metadata    Json?
+  createdAt   DateTime    @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+}
+
+model EmailVerificationCode {
+  id         String    @id @default(cuid())
+  userId     String
+  email      String
+  codeHash   String
+  expiresAt  DateTime
+  consumedAt DateTime?
+  createdAt  DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([email, createdAt])
+  @@index([userId, createdAt])
+}
+
+model Account {
+  id                 String  @id @default(cuid())
+  userId             String
+  type               String
+  provider           String
+  providerAccountId  String
+  refresh_token      String? @db.Text
+  access_token       String? @db.Text
+  expires_at         Int?
+  token_type         String?
+  scope              String?
+  id_token           String? @db.Text
+  session_state      String?
+  oauth_token_secret String?
+  oauth_token        String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}

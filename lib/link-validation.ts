@@ -6,6 +6,9 @@ export interface RequiredLinkValidationResult {
   duplicateRequired: HyperlinkInput[];
 }
 
+const isConfiguredLink = (link: HyperlinkInput) =>
+  link.url.trim().length > 0 && link.anchorText.trim().length > 0;
+
 const escapeRegExp = (value: string) =>
   value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
@@ -22,7 +25,9 @@ export const validateRequiredLinks = (
   html: string,
   links: HyperlinkInput[],
 ): RequiredLinkValidationResult => {
-  const requiredLinks = links.filter((link) => link.required);
+  const requiredLinks = links.filter(
+    (link) => link.required && isConfiguredLink(link),
+  );
   const present: HyperlinkInput[] = [];
   const missing: HyperlinkInput[] = [];
   const duplicateRequired: HyperlinkInput[] = [];
@@ -59,7 +64,9 @@ export const dedupeRequiredLinksInHtml = (
   links: HyperlinkInput[],
 ): string => {
   let nextHtml = html;
-  const requiredLinks = links.filter((link) => link.required);
+  const requiredLinks = links.filter(
+    (link) => link.required && isConfiguredLink(link),
+  );
 
   for (const link of requiredLinks) {
     const regex = buildExactAnchorRegex(link);
@@ -103,6 +110,9 @@ export const enforceLinkPoliciesInHtml = (
 ): string => {
   const followTypeByUrl = new Map<string, HyperlinkInput["followType"]>();
   for (const link of links) {
+    if (!link.url.trim()) {
+      continue;
+    }
     followTypeByUrl.set(normalizeUrlForComparison(link.url), link.followType);
   }
 

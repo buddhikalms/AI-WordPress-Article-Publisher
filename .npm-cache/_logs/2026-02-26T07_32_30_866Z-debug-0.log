@@ -1,0 +1,98 @@
+0 verbose cli F:\Node\node.exe F:\Node\node_modules\npm\bin\npm-cli.js
+1 info using npm@11.6.2
+2 info using node@v24.12.0
+3 silly config load:file:F:\Node\node_modules\npm\npmrc
+4 silly config load:file:F:\2026 - resell\AI article Publisher\.npmrc
+5 silly config load:file:C:\Users\Buddhika\.npmrc
+6 silly config load:file:C:\Users\Buddhika\AppData\Roaming\npm\etc\npmrc
+7 verbose title npm install
+8 verbose argv "install" "--cache" ".npm-cache" "--prefer-online"
+9 verbose logfile logs-max:10 dir:F:\2026 - resell\AI article Publisher\.npm-cache\_logs\2026-02-26T07_32_30_866Z-
+10 verbose logfile F:\2026 - resell\AI article Publisher\.npm-cache\_logs\2026-02-26T07_32_30_866Z-debug-0.log
+11 silly logfile done cleaning log files
+12 silly packumentCache heap:4496293888 maxSize:1124073472 maxEntrySize:562036736
+13 silly idealTree buildDeps
+14 silly fetch manifest @prisma/adapter-mariadb@^7.4.1
+15 silly packumentCache full:https://registry.npmjs.org/@prisma%2fadapter-mariadb cache-miss
+16 verbose shrinkwrap failed to load node_modules/.package-lock.json out of date, updated: node_modules
+17 http fetch GET 200 https://registry.npmjs.org/@prisma%2fadapter-mariadb 919ms (cache miss)
+18 silly fetch manifest @prisma/client@^7.4.1
+19 silly packumentCache full:https://registry.npmjs.org/@prisma%2fclient cache-miss
+20 http fetch GET 200 https://registry.npmjs.org/@prisma%2fclient 2251ms (cache miss)
+21 silly fetch manifest bcryptjs@^2.4.3
+22 silly packumentCache full:https://registry.npmjs.org/bcryptjs cache-miss
+23 http fetch GET 200 https://registry.npmjs.org/bcryptjs 180ms (cache miss)
+24 silly fetch manifest next-auth@^4.24.11
+25 silly packumentCache full:https://registry.npmjs.org/next-auth cache-miss
+26 http fetch GET 200 https://registry.npmjs.org/next-auth 641ms (cache miss)
+27 silly fetch manifest nodemailer@^7.0.7
+28 silly packumentCache full:https://registry.npmjs.org/nodemailer cache-miss
+29 http fetch GET 200 https://registry.npmjs.org/nodemailer 234ms (cache miss)
+30 silly fetch manifest stripe@^18.1.1
+31 silly packumentCache full:https://registry.npmjs.org/stripe cache-miss
+32 http fetch GET 200 https://registry.npmjs.org/stripe 378ms (cache miss)
+33 silly fetch manifest @types/nodemailer@^6.4.17
+34 silly packumentCache full:https://registry.npmjs.org/@types%2fnodemailer cache-miss
+35 http fetch GET 200 https://registry.npmjs.org/@types%2fnodemailer 189ms (cache miss)
+36 silly fetch manifest prisma@^7.4.1
+37 silly packumentCache full:https://registry.npmjs.org/prisma cache-miss
+38 http fetch GET 200 https://registry.npmjs.org/prisma 1864ms (cache miss)
+39 silly placeDep ROOT @prisma/adapter-mariadb@ OK for: ai-article-publisher@0.1.0 want: ^7.4.1
+40 silly placeDep ROOT @prisma/client@ OK for: ai-article-publisher@0.1.0 want: ^7.4.1
+41 silly placeDep ROOT @types/nodemailer@ OK for: ai-article-publisher@0.1.0 want: ^6.4.17
+42 silly placeDep ROOT bcryptjs@ OK for: ai-article-publisher@0.1.0 want: ^2.4.3
+43 silly placeDep ROOT next-auth@ OK for: ai-article-publisher@0.1.0 want: ^4.24.11
+44 silly placeDep ROOT nodemailer@ OK for: ai-article-publisher@0.1.0 want: ^7.0.7
+45 silly placeDep ROOT prisma@ OK for: ai-article-publisher@0.1.0 want: ^7.4.1
+46 silly placeDep ROOT stripe@ OK for: ai-article-publisher@0.1.0 want: ^18.1.1
+47 verbose type system
+48 verbose stack FetchError: Invalid response body while trying to fetch https://registry.npmjs.org/@prisma%2fadapter-mariadb: EPERM: operation not permitted, unlink 'F:\2026 - resell\AI article Publisher\.npm-cache\_cacache\tmp\1bd8b9e6'
+48 verbose stack     at F:\Node\node_modules\npm\node_modules\minipass-fetch\lib\body.js:170:15
+48 verbose stack     at async Response.json (F:\Node\node_modules\npm\node_modules\minipass-fetch\lib\body.js:75:17)
+48 verbose stack     at async RegistryFetcher.packument (F:\Node\node_modules\npm\node_modules\pacote\lib\registry.js:98:25)
+48 verbose stack     at async RegistryFetcher.manifest (F:\Node\node_modules\npm\node_modules\pacote\lib\registry.js:128:23)
+48 verbose stack     at async #fetchManifest (F:\Node\node_modules\npm\node_modules\@npmcli\arborist\lib\arborist\build-ideal-tree.js:1227:20)
+48 verbose stack     at async #nodeFromEdge (F:\Node\node_modules\npm\node_modules\@npmcli\arborist\lib\arborist\build-ideal-tree.js:1065:19)
+48 verbose stack     at async #buildDepStep (F:\Node\node_modules\npm\node_modules\@npmcli\arborist\lib\arborist\build-ideal-tree.js:929:11)
+48 verbose stack     at async Arborist.buildIdealTree (F:\Node\node_modules\npm\node_modules\@npmcli\arborist\lib\arborist\build-ideal-tree.js:182:7)
+48 verbose stack     at async Promise.all (index 1)
+48 verbose stack     at async Arborist.reify (F:\Node\node_modules\npm\node_modules\@npmcli\arborist\lib\arborist\reify.js:114:5)
+49 error code EPERM
+50 error syscall unlink
+51 error path F:\2026 - resell\AI article Publisher\.npm-cache\_cacache\tmp\1bd8b9e6
+52 error errno EPERM
+53 error FetchError: Invalid response body while trying to fetch https://registry.npmjs.org/@prisma%2fadapter-mariadb: EPERM: operation not permitted, unlink 'F:\2026 - resell\AI article Publisher\.npm-cache\_cacache\tmp\1bd8b9e6'
+53 error     at F:\Node\node_modules\npm\node_modules\minipass-fetch\lib\body.js:170:15
+53 error     at async Response.json (F:\Node\node_modules\npm\node_modules\minipass-fetch\lib\body.js:75:17)
+53 error     at async RegistryFetcher.packument (F:\Node\node_modules\npm\node_modules\pacote\lib\registry.js:98:25)
+53 error     at async RegistryFetcher.manifest (F:\Node\node_modules\npm\node_modules\pacote\lib\registry.js:128:23)
+53 error     at async #fetchManifest (F:\Node\node_modules\npm\node_modules\@npmcli\arborist\lib\arborist\build-ideal-tree.js:1227:20)
+53 error     at async #nodeFromEdge (F:\Node\node_modules\npm\node_modules\@npmcli\arborist\lib\arborist\build-ideal-tree.js:1065:19)
+53 error     at async #buildDepStep (F:\Node\node_modules\npm\node_modules\@npmcli\arborist\lib\arborist\build-ideal-tree.js:929:11)
+53 error     at async Arborist.buildIdealTree (F:\Node\node_modules\npm\node_modules\@npmcli\arborist\lib\arborist\build-ideal-tree.js:182:7)
+53 error     at async Promise.all (index 1)
+53 error     at async Arborist.reify (F:\Node\node_modules\npm\node_modules\@npmcli\arborist\lib\arborist\reify.js:114:5) {
+53 error   code: 'EPERM',
+53 error   errno: 'EPERM',
+53 error   syscall: 'unlink',
+53 error   path: 'F:\\2026 - resell\\AI article Publisher\\.npm-cache\\_cacache\\tmp\\1bd8b9e6',
+53 error   type: 'system',
+53 error   requiredBy: '.'
+53 error }
+54 error
+54 error The operation was rejected by your operating system.
+54 error It's possible that the file was already in use (by a text editor or antivirus),
+54 error or that you lack permissions to access it.
+54 error
+54 error If you believe this might be a permissions issue, please double-check the
+54 error permissions of the file and its containing directories, or try running
+54 error the command again as root/Administrator.
+55 silly unfinished npm timer reify 1772091151656
+56 silly unfinished npm timer reify:loadTrees 1772091151657
+57 verbose cwd F:\2026 - resell\AI article Publisher
+58 verbose os Windows_NT 10.0.19045
+59 verbose node v24.12.0
+60 verbose npm  v11.6.2
+61 verbose exit 1
+62 verbose code 1
+63 error A complete log of this run can be found in: F:\2026 - resell\AI article Publisher\.npm-cache\_logs\2026-02-26T07_32_30_866Z-debug-0.log

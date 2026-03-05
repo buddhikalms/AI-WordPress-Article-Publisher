@@ -1,12 +1,17 @@
 import { NextResponse } from "next/server";
 import { getErrorMessage } from "@/lib/errors";
 import { getCurrentUser } from "@/lib/wp";
+import { requireVerifiedUser } from "@/lib/auth-session";
+import { getUserWordPressConfig } from "@/lib/user-wordpress";
 
 export const runtime = "nodejs";
 
-export async function GET() {
+export async function GET(request: Request) {
   try {
-    const me = await getCurrentUser();
+    const user = await requireVerifiedUser(request);
+    const siteId = new URL(request.url).searchParams.get("siteId") || undefined;
+    const wpConfig = await getUserWordPressConfig(user.id, siteId);
+    const me = await getCurrentUser(wpConfig);
     return NextResponse.json({
       ok: true,
       user: {
@@ -25,4 +30,3 @@ export async function GET() {
     );
   }
 }
-

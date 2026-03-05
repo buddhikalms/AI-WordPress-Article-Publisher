@@ -1,27 +1,19 @@
 import { NextResponse } from "next/server";
-import { toErrorResponse } from "@/lib/errors";
+import { TokenReason } from "@prisma/client";
+import { HttpError, toErrorResponse } from "@/lib/errors";
 import { publishRequestSchema } from "@/lib/schemas";
-import {
-  mapToAioseoFallbackMeta,
-  mapToAioseoMetaData,
-  mapToYoastMeta,
-} from "@/lib/seo";
 import { generateInlineArticleImages } from "@/lib/openai";
+import { requireVerifiedUser } from "@/lib/auth-session";
+import { getUserWordPressConfig } from "@/lib/user-wordpress";
+import { consumeTokens, TOKEN_COSTS } from "@/lib/tokens";
+import { applySeoUpdate } from "@/lib/wp-seo";
 import {
   ensureCategory,
   createPost,
-  updatePost,
   uploadFeaturedMedia,
-  WpApiError,
 } from "@/lib/wp";
 
 export const runtime = "nodejs";
-
-const AIOSEO_GUIDANCE =
-  "AIOSEO metadata update failed. Confirm AIOSEO REST API addon is installed/enabled and this WordPress user can edit SEO fields.";
-
-const YOAST_GUIDANCE =
-  "Yoast metadata update failed. Yoast keys often must be registered with show_in_rest. Install wp-snippets/yoast-rest-meta.php as an MU-plugin and ensure the user can edit post meta.";
 
 const escapeHtmlAttribute = (value: string) =>
   value
@@ -78,25 +70,12 @@ const injectInlineImagesIntoHtml = (
 
   return output;
 };
-
-const normalizeWpError = (error: unknown) => {
-  if (error instanceof WpApiError) {
-    return {
-      status: error.status,
-      details: error.details ?? null,
-      message: error.message,
-    };
-  }
-  if (error instanceof Error) {
-    return {
-      message: error.message,
-    };
-  }
-  return { message: "Unknown error." };
-};
-
 export async function POST(request: Request) {
   try {
+    const user = await requireVerifiedUser(request);
+    if (user.tokenBalance < TOKEN_COSTS.PUBLISH_POST) {
+      throw new HttpError(402, "Insufficient tokens. Please buy a package.");
+    }
     const json = await request.json();
     const validation = publishRequestSchema.safeParse(json);
     if (!validation.success) {
@@ -110,6 +89,7 @@ export async function POST(request: Request) {
     }
 
     const payload = validation.data;
+    const wpConfig = await getUserWordPressConfig(user.id, payload.siteId);
     let featuredMediaId: number | undefined;
     let featuredImageUrl: string | undefined;
     const categoryIds = new Set<number>(payload.selectedCategoryIds);
@@ -117,6 +97,7 @@ export async function POST(request: Request) {
     if (payload.newCategoryName?.trim()) {
       const createdOrExistingCategory = await ensureCategory(
         payload.newCategoryName.trim(),
+        wpConfig,
       );
       categoryIds.add(createdOrExistingCategory.id);
     }
@@ -126,7 +107,7 @@ export async function POST(request: Request) {
         imageBase64: payload.featuredImageBase64,
         mimeType: payload.featuredImageMime,
         title: payload.title,
-      });
+      }, wpConfig);
       featuredMediaId = media.id;
       featuredImageUrl = media.source_url;
     }
@@ -150,7 +131,7 @@ export async function POST(request: Request) {
           title: `${payload.title} inline image ${index + 1}`,
           filenameSuggestion: generated.filenameSuggestion,
           altText: generated.altTextSuggestion,
-        });
+        }, wpConfig);
 
         inlineImages.push({
           id: media.id,
@@ -167,98 +148,31 @@ export async function POST(request: Request) {
       html: htmlForPublish,
       excerpt: payload.excerpt,
       status: payload.status,
+      date: payload.status === "future" ? payload.scheduledAt : undefined,
       featuredMediaId,
       categories: Array.from(categoryIds),
+    }, wpConfig);
+
+    const seoUpdate = await applySeoUpdate({
+      postId: createdPost.id,
+      provider: payload.seoProvider,
+      seoPayload: payload.seoPayload,
+      featuredImageUrl,
+      wpConfig,
     });
 
-    let seoUpdate: {
-      ok: boolean;
-      provider: "AIOSEO" | "Yoast" | "None";
-      details: string;
-      error?: unknown;
-    } = {
-      ok: true,
-      provider: payload.seoProvider,
-      details: "SEO update skipped because provider is None.",
-    };
-
-    if (payload.seoProvider === "AIOSEO") {
-      const aioseoMetaData = mapToAioseoMetaData(
-        payload.seoPayload,
-        featuredImageUrl,
-      );
-      const aioseoMetaFallback = mapToAioseoFallbackMeta(
-        payload.seoPayload,
-        featuredImageUrl,
-      );
-
-      const attempts: Array<{
-        label: string;
-        body: Record<string, unknown>;
-      }> = [
-        {
-          label: "aioseo_meta_data object payload",
-          body: { aioseo_meta_data: aioseoMetaData },
-        },
-        {
-          label: "aioseo_meta_data JSON string payload",
-          body: { aioseo_meta_data: JSON.stringify(aioseoMetaData) },
-        },
-        {
-          label: "AIOSEO fallback meta keys",
-          body: { meta: aioseoMetaFallback },
-        },
-      ];
-
-      const failedAttempts: Array<{ label: string; error: unknown }> = [];
-      let aioseoApplied = false;
-      for (const attempt of attempts) {
-        try {
-          await updatePost(createdPost.id, attempt.body);
-          seoUpdate = {
-            ok: true,
-            provider: "AIOSEO",
-            details: `AIOSEO update succeeded using: ${attempt.label}.`,
-          };
-          aioseoApplied = true;
-          break;
-        } catch (error) {
-          failedAttempts.push({
-            label: attempt.label,
-            error: normalizeWpError(error),
-          });
-        }
-      }
-
-      if (!aioseoApplied) {
-        seoUpdate = {
-          ok: false,
-          provider: "AIOSEO",
-          details: AIOSEO_GUIDANCE,
-          error: failedAttempts,
-        };
-      }
-    }
-
-    if (payload.seoProvider === "Yoast") {
-      try {
-        const meta = mapToYoastMeta(payload.seoPayload, featuredImageUrl);
-        await updatePost(createdPost.id, { meta });
-        seoUpdate = {
-          ok: true,
-          provider: "Yoast",
-          details: "Yoast metadata update request completed.",
-        };
-      } catch (error) {
-        const normalized = normalizeWpError(error);
-        seoUpdate = {
-          ok: false,
-          provider: "Yoast",
-          details: YOAST_GUIDANCE,
-          error: normalized,
-        };
-      }
-    }
+    const requestId =
+      request.headers.get("x-request-id") || crypto.randomUUID();
+    const tokenCharge = await consumeTokens({
+      userId: user.id,
+      amount: TOKEN_COSTS.PUBLISH_POST,
+      reason: TokenReason.PUBLISH_POST,
+      action: "PUBLISH_POST",
+      description: `Publish post \"${payload.title}\"`,
+      requestId: `publish:${requestId}`,
+      referenceType: "publish_post",
+      referenceId: String(createdPost.id),
+    });
 
     return NextResponse.json({
       postId: createdPost.id,
@@ -270,6 +184,11 @@ export async function POST(request: Request) {
       featuredImage: featuredMediaId
         ? { id: featuredMediaId, sourceUrl: featuredImageUrl }
         : null,
+      tokenCharge: {
+        charged: tokenCharge.charged,
+        amount: TOKEN_COSTS.PUBLISH_POST,
+        remaining: tokenCharge.tokenBalance,
+      },
     });
   } catch (error) {
     return toErrorResponse(error, "Failed to publish post to WordPress.");

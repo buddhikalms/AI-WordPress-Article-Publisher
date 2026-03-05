@@ -7,7 +7,7 @@ export class WpApiError extends HttpError {
   }
 }
 
-interface WpConfig {
+export interface WpConfig {
   baseUrl: string;
   username: string;
   appPassword: string;
@@ -31,7 +31,19 @@ export interface WpCategory {
   count?: number;
 }
 
-const getWpConfig = (): WpConfig => {
+const getWpConfig = (override?: WpConfig): WpConfig => {
+  if (override) {
+    if (!override.baseUrl.trim() || !override.username.trim() || !override.appPassword.trim()) {
+      throw new HttpError(400, "WordPress credentials are incomplete for this account.");
+    }
+
+    return {
+      baseUrl: override.baseUrl.trim().replace(/\/+$/, ""),
+      username: override.username.trim(),
+      appPassword: override.appPassword.trim(),
+    };
+  }
+
   const baseUrl = process.env.WORDPRESS_BASE_URL?.trim();
   const username = process.env.WORDPRESS_USERNAME?.trim();
   const appPassword = process.env.WORDPRESS_APP_PASSWORD?.trim();
@@ -46,8 +58,8 @@ const getWpConfig = (): WpConfig => {
   return { baseUrl: baseUrl.replace(/\/+$/, ""), username, appPassword };
 };
 
-const buildWpUrl = (path: string) => {
-  const { baseUrl } = getWpConfig();
+const buildWpUrl = (path: string, config?: WpConfig) => {
+  const { baseUrl } = getWpConfig(config);
   if (/^https?:\/\//i.test(path)) {
     return path;
   }
@@ -70,8 +82,8 @@ const splitPathAndQuery = (path: string) => {
   };
 };
 
-const buildFallbackWpUrl = (path: string) => {
-  const { baseUrl } = getWpConfig();
+const buildFallbackWpUrl = (path: string, config?: WpConfig) => {
+  const { baseUrl } = getWpConfig(config);
   if (/^https?:\/\//i.test(path)) {
     return null;
   }
@@ -94,8 +106,8 @@ const buildFallbackWpUrl = (path: string) => {
   return url.toString();
 };
 
-const buildAuthHeader = () => {
-  const { username, appPassword } = getWpConfig();
+const buildAuthHeader = (config?: WpConfig) => {
+  const { username, appPassword } = getWpConfig(config);
   const token = Buffer.from(`${username}:${appPassword}`).toString("base64");
   return `Basic ${token}`;
 };
@@ -120,9 +132,13 @@ const isHtmlResponse = (response: Response, parsedBody: unknown) => {
   return typeof parsedBody === "string" && parsedBody.trim().startsWith("<!DOCTYPE html");
 };
 
-const wpRequest = async <T>(path: string, init: RequestInit = {}): Promise<T> => {
+const wpRequest = async <T>(
+  path: string,
+  init: RequestInit = {},
+  config?: WpConfig,
+): Promise<T> => {
   const headers = new Headers(init.headers);
-  headers.set("Authorization", buildAuthHeader());
+  headers.set("Authorization", buildAuthHeader(config));
 
   const body = init.body;
   const hasBinaryBody =
@@ -143,11 +159,11 @@ const wpRequest = async <T>(path: string, init: RequestInit = {}): Promise<T> =>
     return { response, parsedBody };
   };
 
-  const primaryUrl = buildWpUrl(path);
+  const primaryUrl = buildWpUrl(path, config);
   let { response, parsedBody } = await tryRequest(primaryUrl);
 
   if (isHtmlResponse(response, parsedBody)) {
-    const fallbackUrl = buildFallbackWpUrl(path);
+    const fallbackUrl = buildFallbackWpUrl(path, config);
     if (fallbackUrl) {
       const fallbackAttempt = await tryRequest(fallbackUrl);
       response = fallbackAttempt.response;
@@ -205,7 +221,7 @@ export const uploadFeaturedMedia = async (params: {
   title: string;
   filenameSuggestion?: string;
   altText?: string;
-}) => {
+}, config?: WpConfig) => {
   const filenameInput =
     params.filenameSuggestion?.replace(/\.[a-z0-9]+$/i, "") || params.title;
   const filenameStem = sanitizeFilename(filenameInput) || "featured-image";
@@ -225,7 +241,7 @@ export const uploadFeaturedMedia = async (params: {
     method: "POST",
     headers,
     body: bytes,
-  });
+  }, config);
 
   if (params.altText?.trim()) {
     try {
@@ -237,6 +253,7 @@ export const uploadFeaturedMedia = async (params: {
             alt_text: params.altText.trim(),
           }),
         },
+        config,
       );
     } catch {
       // Keep upload successful even if alt text update is blocked.
@@ -248,20 +265,28 @@ export const uploadFeaturedMedia = async (params: {
 
 export const createPost = async (payload: {
   title: string;
+  slug?: string;
   html: string;
-  status: "draft" | "publish";
+  status: "draft" | "publish" | "future";
   excerpt: string;
+  date?: string;
   featuredMediaId?: number;
   categories?: number[];
-}) => {
+}, config?: WpConfig) => {
   const body: Record<string, unknown> = {
     title: payload.title,
     content: payload.html,
     excerpt: payload.excerpt,
     status: payload.status,
   };
+  if (payload.slug?.trim()) {
+    body.slug = payload.slug.trim();
+  }
   if (payload.featuredMediaId) {
     body.featured_media = payload.featuredMediaId;
+  }
+  if (payload.date) {
+    body.date = payload.date;
   }
   if (payload.categories && payload.categories.length > 0) {
     body.categories = payload.categories;
@@ -270,40 +295,41 @@ export const createPost = async (payload: {
   return wpRequest<WpPostResponse>("/wp-json/wp/v2/posts", {
     method: "POST",
     body: JSON.stringify(body),
-  });
+  }, config);
 };
 
 export const updatePost = async (
   postId: number,
   payload: Record<string, unknown>,
+  config?: WpConfig,
 ) => {
   return wpRequest<Record<string, unknown>>(`/wp-json/wp/v2/posts/${postId}`, {
     method: "POST",
     body: JSON.stringify(payload),
-  });
+  }, config);
 };
 
-export const getCurrentUser = async () => {
+export const getCurrentUser = async (config?: WpConfig) => {
   return wpRequest<Record<string, unknown>>("/wp-json/wp/v2/users/me", {
     method: "GET",
-  });
+  }, config);
 };
 
-export const getSeoDiagnosticPosts = async () => {
+export const getSeoDiagnosticPosts = async (config?: WpConfig) => {
   const query =
     "/wp-json/wp/v2/posts?per_page=1&context=edit&_fields=id,title,meta,aioseo_head,aioseo_meta_data";
-  return wpRequest<Array<Record<string, unknown>>>(query, { method: "GET" });
+  return wpRequest<Array<Record<string, unknown>>>(query, { method: "GET" }, config);
 };
 
-export const listCategories = async () => {
+export const listCategories = async (config?: WpConfig) => {
   const query =
     "/wp-json/wp/v2/categories?per_page=100&orderby=name&order=asc&context=edit&_fields=id,name,slug,count";
-  return wpRequest<WpCategory[]>(query, { method: "GET" });
+  return wpRequest<WpCategory[]>(query, { method: "GET" }, config);
 };
 
-export const getCategoryByName = async (name: string) => {
+export const getCategoryByName = async (name: string, config?: WpConfig) => {
   const query = `/wp-json/wp/v2/categories?search=${encodeURIComponent(name)}&per_page=100&context=edit&_fields=id,name,slug,count`;
-  const results = await wpRequest<WpCategory[]>(query, { method: "GET" });
+  const results = await wpRequest<WpCategory[]>(query, { method: "GET" }, config);
   const needle = name.trim().toLowerCase();
   return (
     results.find((category) => category.name.trim().toLowerCase() === needle) ||
@@ -311,21 +337,21 @@ export const getCategoryByName = async (name: string) => {
   );
 };
 
-export const createCategory = async (name: string) => {
+export const createCategory = async (name: string, config?: WpConfig) => {
   return wpRequest<WpCategory>("/wp-json/wp/v2/categories", {
     method: "POST",
     body: JSON.stringify({ name: name.trim() }),
-  });
+  }, config);
 };
 
-export const ensureCategory = async (name: string) => {
+export const ensureCategory = async (name: string, config?: WpConfig) => {
   const normalized = name.trim();
   if (!normalized) {
     throw new HttpError(400, "Category name cannot be empty.");
   }
-  const existing = await getCategoryByName(normalized);
+  const existing = await getCategoryByName(normalized, config);
   if (existing) {
     return existing;
   }
-  return createCategory(normalized);
+  return createCategory(normalized, config);
 };

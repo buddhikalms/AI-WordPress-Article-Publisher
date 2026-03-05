@@ -1,0 +1,282 @@
+.aia-wrap {
+  max-width: 1440px;
+}
+
+.aia-subtitle {
+  margin-top: 6px;
+  color: #4b5563;
+}
+
+.aia-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.65fr) minmax(320px, 0.9fr);
+  gap: 20px;
+  margin-top: 20px;
+}
+
+.aia-main,
+.aia-sidebar {
+  display: grid;
+  gap: 20px;
+}
+
+.aia-card {
+  background: #fff;
+  border: 1px solid #d7dee7;
+  border-radius: 16px;
+  padding: 20px;
+  box-shadow: 0 10px 30px rgba(15, 23, 42, 0.04);
+}
+
+.aia-card__header {
+  margin-bottom: 16px;
+}
+
+.aia-card__header h2,
+.aia-links__header h3 {
+  margin: 0 0 4px;
+  font-size: 18px;
+}
+
+.aia-card__header p,
+.aia-links__header {
+  margin: 0;
+  color: #4b5563;
+}
+
+.aia-settings-grid,
+.aia-form-grid,
+.aia-seo-grid {
+  display: grid;
+  gap: 14px;
+}
+
+.aia-settings-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.aia-form-grid,
+.aia-seo-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.aia-shared-grid {
+  display: grid;
+  grid-template-columns: minmax(280px, 0.8fr) minmax(0, 1.2fr);
+  gap: 18px;
+}
+
+.aia-panel {
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 14px;
+  padding: 16px;
+}
+
+.aia-label,
+.aia-field span {
+  display: block;
+  margin-bottom: 6px;
+  font-weight: 600;
+  color: #0f172a;
+}
+
+.aia-field--full {
+  grid-column: 1 / -1;
+}
+
+.aia-field input,
+.aia-field textarea,
+.aia-field select,
+#aia-seo-provider {
+  width: 100%;
+  border: 1px solid #cbd5e1;
+  border-radius: 10px;
+  padding: 10px 12px;
+  background: #fff;
+}
+
+.aia-field textarea {
+  resize: vertical;
+}
+
+.aia-settings-actions {
+  grid-column: 1 / -1;
+}
+
+.aia-category-list {
+  max-height: 280px;
+  overflow: auto;
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  background: #fff;
+  border: 1px solid #cbd5e1;
+  border-radius: 10px;
+  margin-bottom: 14px;
+}
+
+.aia-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.aia-checkbox--inline {
+  margin-top: 26px;
+}
+
+.aia-tablist {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 18px;
+}
+
+.aia-tab {
+  border: 1px solid #cbd5e1;
+  background: #f8fafc;
+  padding: 10px 14px;
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.aia-tab.is-active {
+  background: #0f172a;
+  border-color: #0f172a;
+  color: #fff;
+}
+
+.aia-tabpanel {
+  display: none;
+}
+
+.aia-tabpanel.is-active {
+  display: block;
+}
+
+.aia-links {
+  margin: 20px 0;
+  padding: 16px;
+  border: 1px solid #d7dee7;
+  border-radius: 14px;
+  background: #fbfdff;
+}
+
+.aia-links__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.aia-link-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr) 180px 120px auto;
+  gap: 12px;
+  align-items: start;
+  padding: 12px 0;
+  border-top: 1px solid #e2e8f0;
+}
+
+.aia-link-row:first-child {
+  border-top: 0;
+  padding-top: 0;
+}
+
+.aia-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 18px;
+}
+
+.aia-note,
+.aia-status {
+  padding: 12px 14px;
+  border-radius: 12px;
+}
+
+.aia-note {
+  margin: 12px 0 16px;
+  background: #eff6ff;
+  border: 1px solid #bfdbfe;
+  color: #1e3a8a;
+}
+
+.aia-status {
+  margin: 12px 0 0;
+  border: 1px solid transparent;
+}
+
+.aia-status.is-success {
+  background: #ecfdf5;
+  border-color: #6ee7b7;
+  color: #065f46;
+}
+
+.aia-status.is-error {
+  background: #fef2f2;
+  border-color: #fca5a5;
+  color: #991b1b;
+}
+
+.aia-status.is-warning {
+  background: #fff7ed;
+  border-color: #fdba74;
+  color: #9a3412;
+}
+
+.aia-image-wrap img {
+  display: block;
+  width: 100%;
+  height: auto;
+  border-radius: 14px;
+  border: 1px solid #d7dee7;
+}
+
+.aia-result {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 420px;
+  overflow: auto;
+  background: #0f172a;
+  color: #e2e8f0;
+  border-radius: 12px;
+  padding: 14px;
+}
+
+.aia-preview {
+  min-height: 240px;
+  max-height: 720px;
+  overflow: auto;
+  border: 1px solid #d7dee7;
+  border-radius: 12px;
+  background: #fff;
+  padding: 16px;
+}
+
+.aia-preview :first-child {
+  margin-top: 0;
+}
+
+@media (max-width: 1180px) {
+  .aia-layout,
+  .aia-shared-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 860px) {
+  .aia-settings-grid,
+  .aia-form-grid,
+  .aia-seo-grid,
+  .aia-link-row {
+    grid-template-columns: 1fr;
+  }
+
+  .aia-tablist {
+    flex-wrap: wrap;
+  }
+}
