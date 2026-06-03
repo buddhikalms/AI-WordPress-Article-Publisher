@@ -3,7 +3,7 @@
 /**
  * Plugin Name: AI Article Publisher
  * Description: Generate, import, and publish AI-assisted WordPress posts from the WordPress admin.
- * Version: 0.1.1
+ * Version: 0.4.0
  * Author: BUDDHIKA_VIRAJ
  * Requires at least: 6.4
  * Requires PHP: 7.4
@@ -14,116 +14,74 @@ if (!defined('ABSPATH')) {
 	exit;
 }
 
-final class AI_Article_Publisher_Error extends Exception
-{
-	/** @var int */
-	public $status;
-
-	/** @var mixed */
-	public $details;
-
-	/**
-	 * @param string $message
-	 * @param int    $status
-	 * @param mixed  $details
-	 */
-	public function __construct($message, $status = 400, $details = null)
-	{
-		parent::__construct($message);
-		$this->status = (int) $status;
-		$this->details = $details;
-	}
-}
+require_once __DIR__ . '/includes/class-aia-error.php';
+require_once __DIR__ . '/includes/class-aia-providers.php';
+require_once __DIR__ . '/includes/class-seo-meta.php';
+require_once __DIR__ . '/includes/class-mcp-auth.php';
+require_once __DIR__ . '/includes/class-mcp-tools.php';
+require_once __DIR__ . '/includes/class-mcp-server.php';
+require_once __DIR__ . '/includes/class-admin-ui.php';
+require_once __DIR__ . '/includes/admin/class-aia-admin-screen.php';
 
 final class AI_Article_Publisher
 {
+	const VERSION = '0.4.0';
 	const OPTION_KEY = 'aia_publisher_settings';
 	const PAGE_SLUG = 'ai-article-publisher';
 	const NONCE_ACTION = 'aia_publisher_admin';
 	const SAVE_SETTINGS_ACTION = 'aia_save_settings';
 	const DEFAULT_TEXT_MODEL = 'gpt-4.1-mini';
 	const IMAGE_MODEL = 'gpt-image-1';
+	const DEFAULT_CLAUDE_MODEL = 'claude-3-5-sonnet-latest';
+	const LOG_OPTION_KEY = 'aia_publisher_logs';
+
+	/** @var AIA_Admin_Screen */
+	private $admin_screen;
+
+	/** @var AIA_MCP_Admin_UI */
+	private $mcp_admin_ui;
+
+	/** @var AIA_MCP_Server */
+	private $mcp_server;
 
 	public function __construct()
 	{
-		add_action('admin_menu', array($this, 'register_menu'));
-		add_action('admin_enqueue_scripts', array($this, 'enqueue_assets'));
-		add_action('admin_post_' . self::SAVE_SETTINGS_ACTION, array($this, 'handle_save_settings'));
+		$this->admin_screen = new AIA_Admin_Screen($this);
+		$mcp_auth = new AIA_MCP_Auth();
+		$mcp_seo = new AIA_SEO_Meta();
+		$mcp_tools = new AIA_MCP_Tools($mcp_auth, $mcp_seo);
+		$this->mcp_server = new AIA_MCP_Server($mcp_auth, $mcp_tools);
+		$this->mcp_admin_ui = new AIA_MCP_Admin_UI($mcp_auth);
+
+		add_action('admin_menu', array($this->admin_screen, 'register_menu'));
+		add_action('admin_menu', array($this->mcp_admin_ui, 'register_menu'));
+		add_action('admin_enqueue_scripts', array($this->admin_screen, 'enqueue_assets'));
+		add_action('rest_api_init', array($mcp_seo, 'register_rest_fields'));
+		add_action('rest_api_init', array($this->mcp_server, 'register_routes'));
+		$this->mcp_admin_ui->register_actions();
+		add_action('admin_post_' . self::SAVE_SETTINGS_ACTION, array($this->admin_screen, 'handle_save_settings'));
 		add_action('wp_ajax_aia_generate_article', array($this, 'ajax_generate_article'));
 		add_action('wp_ajax_aia_generate_image', array($this, 'ajax_generate_image'));
 		add_action('wp_ajax_aia_publish_post', array($this, 'ajax_publish_post'));
 		add_action('wp_ajax_aia_import_google_doc', array($this, 'ajax_import_google_doc'));
 		add_action('wp_ajax_aia_news_autopilot', array($this, 'ajax_news_autopilot'));
+		add_action('wp_ajax_aia_generate_claude_prompt', array($this, 'ajax_generate_claude_prompt'));
+		add_action('wp_ajax_aia_validate_claude_json', array($this, 'ajax_validate_claude_json'));
+		add_action('wp_ajax_aia_ai_tool', array($this, 'ajax_ai_tool'));
 	}
 
-	public function register_menu()
-	{
-		add_menu_page(
-			__('AI Article Publisher', 'ai-article-publisher'),
-			__('AI Publisher', 'ai-article-publisher'),
-			'edit_posts',
-			self::PAGE_SLUG,
-			array($this, 'render_admin_page'),
-			'dashicons-edit-large',
-			58
-		);
-	}
-
-	public function enqueue_assets($hook)
-	{
-		if (false === strpos((string) $hook, self::PAGE_SLUG)) {
-			return;
-		}
-
-		$asset_base = plugin_dir_url(__FILE__) . 'assets/';
-		wp_enqueue_style('aia-publisher-admin', $asset_base . 'admin.css', array(), '0.1.0');
-		wp_enqueue_script('aia-publisher-admin', $asset_base . 'admin.js', array(), '0.1.0', true);
-
-		wp_localize_script(
-			'aia-publisher-admin',
-			'AIAArticlePublisher',
-			array(
-				'ajaxUrl' => admin_url('admin-ajax.php'),
-				'nonce' => wp_create_nonce(self::NONCE_ACTION),
-				'defaultTone' => $this->get_settings()['default_tone'],
-				'strings' => array(
-					'manualSaved' => __('Post created successfully.', 'ai-article-publisher'),
-					'googleSaved' => __('Google Doc published successfully.', 'ai-article-publisher'),
-					'newsSaved' => __('News autopilot finished.', 'ai-article-publisher'),
-				),
-			)
-		);
-	}
-
-	public function handle_save_settings()
-	{
-		if (!current_user_can('manage_options')) {
-			wp_die(esc_html__('You do not have permission to update these settings.', 'ai-article-publisher'));
-		}
-
-		check_admin_referer(self::SAVE_SETTINGS_ACTION);
-
-		$raw = isset($_POST['settings']) ? wp_unslash($_POST['settings']) : array();
-		$sanitized = $this->sanitize_settings(is_array($raw) ? $raw : array());
-		update_option(self::OPTION_KEY, $sanitized, false);
-
-		$redirect_url = add_query_arg(
-			array(
-				'page' => self::PAGE_SLUG,
-				'settings-updated' => '1',
-			),
-			admin_url('admin.php')
-		);
-
-		wp_safe_redirect($redirect_url);
-		exit;
-	}
-
-	private function get_settings()
+	public function get_settings()
 	{
 		$defaults = array(
+			'default_provider' => 'openai',
 			'openai_api_key' => '',
 			'openai_text_model' => self::DEFAULT_TEXT_MODEL,
+			'openai_image_model' => self::IMAGE_MODEL,
+			'claude_api_key' => '',
+			'claude_model' => self::DEFAULT_CLAUDE_MODEL,
+			'provider_fallback_order' => 'openai,claude_api',
+			'temperature' => '0.4',
+			'max_tokens' => '4096',
 			'newsdata_api_key' => '',
 			'default_tone' => 'Professional',
 		);
@@ -134,27 +92,53 @@ final class AI_Article_Publisher
 		return wp_parse_args($stored, $defaults);
 	}
 
-	private function sanitize_settings($settings)
+	public function sanitize_settings($settings)
 	{
 		$default_tone = isset($settings['default_tone']) ? sanitize_text_field($settings['default_tone']) : 'Professional';
 		if (!in_array($default_tone, $this->get_tone_options(), true)) {
 			$default_tone = 'Professional';
 		}
+		$default_provider = isset($settings['default_provider']) ? sanitize_key($settings['default_provider']) : 'openai';
+		if (!in_array($default_provider, $this->get_provider_ids(), true)) {
+			$default_provider = 'openai';
+		}
+		$temperature = isset($settings['temperature']) ? (float) $settings['temperature'] : 0.4;
+		$temperature = min(max($temperature, 0), 2);
+		$max_tokens = isset($settings['max_tokens']) ? (int) $settings['max_tokens'] : 4096;
+		$max_tokens = min(max($max_tokens, 512), 20000);
 
 		return array(
+			'default_provider' => $default_provider,
 			'openai_api_key' => isset($settings['openai_api_key']) ? trim((string) $settings['openai_api_key']) : '',
 			'openai_text_model' => isset($settings['openai_text_model']) ? sanitize_text_field($settings['openai_text_model']) : self::DEFAULT_TEXT_MODEL,
+			'openai_image_model' => isset($settings['openai_image_model']) ? sanitize_text_field($settings['openai_image_model']) : self::IMAGE_MODEL,
+			'claude_api_key' => isset($settings['claude_api_key']) ? trim((string) $settings['claude_api_key']) : '',
+			'claude_model' => isset($settings['claude_model']) ? sanitize_text_field($settings['claude_model']) : self::DEFAULT_CLAUDE_MODEL,
+			'provider_fallback_order' => isset($settings['provider_fallback_order']) ? $this->sanitize_provider_order($settings['provider_fallback_order']) : 'openai,claude_api',
+			'temperature' => (string) $temperature,
+			'max_tokens' => (string) $max_tokens,
 			'newsdata_api_key' => isset($settings['newsdata_api_key']) ? trim((string) $settings['newsdata_api_key']) : '',
 			'default_tone' => $default_tone,
 		);
 	}
 
-	private function get_tone_options()
+	public function get_provider_ids()
+	{
+		return array('openai', 'claude_api', 'claude_desktop_manual');
+	}
+
+	public function get_recent_logs()
+	{
+		$logs = get_option(self::LOG_OPTION_KEY, array());
+		return is_array($logs) ? array_slice($logs, 0, 30) : array();
+	}
+
+	public function get_tone_options()
 	{
 		return array('Professional', 'Conversational', 'Authoritative', 'Friendly', 'Technical');
 	}
 
-	private function get_news_categories()
+	public function get_news_categories()
 	{
 		return array(
 			'business',
@@ -170,410 +154,6 @@ final class AI_Article_Publisher
 			'tourism',
 			'world',
 		);
-	}
-
-	public function render_admin_page()
-	{
-		if (!current_user_can('edit_posts')) {
-			wp_die(esc_html__('You do not have permission to access this page.', 'ai-article-publisher'));
-		}
-
-		$settings = $this->get_settings();
-		$categories = get_categories(
-			array(
-				'hide_empty' => false,
-				'taxonomy' => 'category',
-			)
-		);
-		$settings_saved = isset($_GET['settings-updated']) && '1' === $_GET['settings-updated'];
-?>
-<div class="wrap aia-wrap">
-    <h1><?php esc_html_e('AI Article Publisher', 'ai-article-publisher'); ?></h1>
-    <p class="aia-subtitle">
-        <?php esc_html_e('Manual studio, Google Doc import, and NewsData autopilot directly inside WordPress.', 'ai-article-publisher'); ?>
-    </p>
-
-    <?php if ($settings_saved) : ?>
-    <div class="notice notice-success is-dismissible">
-        <p><?php esc_html_e('Plugin settings saved.', 'ai-article-publisher'); ?></p>
-    </div>
-    <?php endif; ?>
-
-    <div id="aia-status" class="aia-status" hidden></div>
-
-    <?php if (current_user_can('manage_options')) : ?>
-    <div class="aia-card">
-        <div class="aia-card__header">
-            <h2><?php esc_html_e('API Settings', 'ai-article-publisher'); ?></h2>
-            <p><?php esc_html_e('These keys are used directly from this WordPress site. No SaaS billing or account layer is included in the plugin.', 'ai-article-publisher'); ?>
-            </p>
-        </div>
-        <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>" class="aia-settings-grid">
-            <input type="hidden" name="action" value="<?php echo esc_attr(self::SAVE_SETTINGS_ACTION); ?>" />
-            <?php wp_nonce_field(self::SAVE_SETTINGS_ACTION); ?>
-            <label class="aia-field">
-                <span><?php esc_html_e('OpenAI API Key', 'ai-article-publisher'); ?></span>
-                <input type="password" name="settings[openai_api_key]"
-                    value="<?php echo esc_attr($settings['openai_api_key']); ?>" autocomplete="off" />
-            </label>
-            <label class="aia-field">
-                <span><?php esc_html_e('OpenAI Text Model', 'ai-article-publisher'); ?></span>
-                <input type="text" name="settings[openai_text_model]"
-                    value="<?php echo esc_attr($settings['openai_text_model']); ?>"
-                    placeholder="<?php echo esc_attr(self::DEFAULT_TEXT_MODEL); ?>" />
-            </label>
-            <label class="aia-field">
-                <span><?php esc_html_e('NewsData API Key', 'ai-article-publisher'); ?></span>
-                <input type="password" name="settings[newsdata_api_key]"
-                    value="<?php echo esc_attr($settings['newsdata_api_key']); ?>" autocomplete="off" />
-            </label>
-            <label class="aia-field">
-                <span><?php esc_html_e('Default Tone', 'ai-article-publisher'); ?></span>
-                <select name="settings[default_tone]">
-                    <?php foreach ($this->get_tone_options() as $tone_option) : ?>
-                    <option value="<?php echo esc_attr($tone_option); ?>"
-                        <?php selected($settings['default_tone'], $tone_option); ?>>
-                        <?php echo esc_html($tone_option); ?></option>
-                    <?php endforeach; ?>
-                </select>
-            </label>
-            <div class="aia-settings-actions">
-                <button type="submit"
-                    class="button button-primary"><?php esc_html_e('Save Settings', 'ai-article-publisher'); ?></button>
-            </div>
-        </form>
-    </div>
-    <?php endif; ?>
-
-    <div class="aia-layout">
-        <div class="aia-main">
-            <div class="aia-card">
-                <div class="aia-card__header">
-                    <h2><?php esc_html_e('Shared Publish Settings', 'ai-article-publisher'); ?></h2>
-                    <p><?php esc_html_e('These values are reused across manual, Google Doc, and news workflows.', 'ai-article-publisher'); ?>
-                    </p>
-                </div>
-                <div class="aia-shared-grid">
-                    <div class="aia-panel">
-                        <label class="aia-label"><?php esc_html_e('Site Categories', 'ai-article-publisher'); ?></label>
-                        <div class="aia-category-list">
-                            <?php if (empty($categories)) : ?>
-                            <p class="description">
-                                <?php esc_html_e('No categories found yet.', 'ai-article-publisher'); ?></p>
-                            <?php else : ?>
-                            <?php foreach ($categories as $category) : ?>
-                            <label class="aia-checkbox">
-                                <input type="checkbox" class="aia-category-checkbox"
-                                    value="<?php echo esc_attr((string) $category->term_id); ?>" />
-                                <span><?php echo esc_html($category->name); ?></span>
-                            </label>
-                            <?php endforeach; ?>
-                            <?php endif; ?>
-                        </div>
-                        <label class="aia-field">
-                            <span><?php esc_html_e('Create Category On Publish', 'ai-article-publisher'); ?></span>
-                            <input type="text" id="aia-new-category-name"
-                                placeholder="<?php esc_attr_e('Optional category name', 'ai-article-publisher'); ?>" />
-                        </label>
-                    </div>
-                    <div class="aia-panel">
-                        <label class="aia-label"><?php esc_html_e('SEO Provider', 'ai-article-publisher'); ?></label>
-                        <select id="aia-seo-provider">
-                            <option value="None"><?php esc_html_e('None', 'ai-article-publisher'); ?></option>
-                            <option value="AIOSEO"><?php esc_html_e('AIOSEO', 'ai-article-publisher'); ?></option>
-                            <option value="Yoast"><?php esc_html_e('Yoast', 'ai-article-publisher'); ?></option>
-                        </select>
-
-                        <div class="aia-seo-grid">
-                            <label class="aia-field">
-                                <span><?php esc_html_e('SEO Title', 'ai-article-publisher'); ?></span>
-                                <input type="text" id="aia-seo-title" />
-                            </label>
-                            <label class="aia-field">
-                                <span><?php esc_html_e('Meta Description', 'ai-article-publisher'); ?></span>
-                                <textarea id="aia-meta-description" rows="3"></textarea>
-                            </label>
-                            <label class="aia-field">
-                                <span><?php esc_html_e('Focus Keyword (optional)', 'ai-article-publisher'); ?></span>
-                                <input type="text" id="aia-focus-keyword"
-                                    placeholder="<?php esc_attr_e('If empty, it will be derived from the title', 'ai-article-publisher'); ?>" />
-                            </label>
-                            <label class="aia-field">
-                                <span><?php esc_html_e('Canonical URL', 'ai-article-publisher'); ?></span>
-                                <input type="url" id="aia-canonical-url" />
-                            </label>
-                            <label class="aia-field">
-                                <span><?php esc_html_e('Open Graph Title', 'ai-article-publisher'); ?></span>
-                                <input type="text" id="aia-og-title" />
-                            </label>
-                            <label class="aia-field">
-                                <span><?php esc_html_e('Open Graph Description', 'ai-article-publisher'); ?></span>
-                                <textarea id="aia-og-description" rows="3"></textarea>
-                            </label>
-                            <label class="aia-field">
-                                <span><?php esc_html_e('Open Graph Image URL', 'ai-article-publisher'); ?></span>
-                                <input type="url" id="aia-og-image-url" />
-                            </label>
-                            <label class="aia-field">
-                                <span><?php esc_html_e('Twitter Title', 'ai-article-publisher'); ?></span>
-                                <input type="text" id="aia-twitter-title" />
-                            </label>
-                            <label class="aia-field">
-                                <span><?php esc_html_e('Twitter Description', 'ai-article-publisher'); ?></span>
-                                <textarea id="aia-twitter-description" rows="3"></textarea>
-                            </label>
-                            <label class="aia-field">
-                                <span><?php esc_html_e('Twitter Image URL', 'ai-article-publisher'); ?></span>
-                                <input type="url" id="aia-twitter-image-url" />
-                            </label>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <div class="aia-card">
-                <div class="aia-tablist" role="tablist">
-                    <button type="button" class="aia-tab is-active"
-                        data-aia-tab="manual"><?php esc_html_e('Manual Studio', 'ai-article-publisher'); ?></button>
-                    <button type="button" class="aia-tab"
-                        data-aia-tab="google"><?php esc_html_e('Google Doc Import', 'ai-article-publisher'); ?></button>
-                    <button type="button" class="aia-tab"
-                        data-aia-tab="news"><?php esc_html_e('News Autopilot', 'ai-article-publisher'); ?></button>
-                </div>
-
-                <div class="aia-tabpanel is-active" data-aia-panel="manual">
-                    <div class="aia-form-grid">
-                        <label class="aia-field aia-field--full">
-                            <span><?php esc_html_e('Article Title', 'ai-article-publisher'); ?></span>
-                            <input type="text" id="aia-manual-title"
-                                placeholder="<?php esc_attr_e('Best AI Writing Tools for Agencies', 'ai-article-publisher'); ?>" />
-                        </label>
-                        <label class="aia-field aia-field--full">
-                            <span><?php esc_html_e('Topic Brief', 'ai-article-publisher'); ?></span>
-                            <textarea id="aia-manual-brief" rows="6"
-                                placeholder="<?php esc_attr_e('Describe the angle, audience, structure, and must-cover points.', 'ai-article-publisher'); ?>"></textarea>
-                        </label>
-                        <label class="aia-field">
-                            <span><?php esc_html_e('Keywords', 'ai-article-publisher'); ?></span>
-                            <input type="text" id="aia-manual-keywords"
-                                placeholder="<?php esc_attr_e('seo automation, ai publishing, wordpress', 'ai-article-publisher'); ?>" />
-                        </label>
-                        <label class="aia-field">
-                            <span><?php esc_html_e('Tone', 'ai-article-publisher'); ?></span>
-                            <select id="aia-manual-tone">
-                                <?php foreach ($this->get_tone_options() as $tone_option) : ?>
-                                <option value="<?php echo esc_attr($tone_option); ?>"
-                                    <?php selected($settings['default_tone'], $tone_option); ?>>
-                                    <?php echo esc_html($tone_option); ?></option>
-                                <?php endforeach; ?>
-                            </select>
-                        </label>
-                        <label class="aia-field">
-                            <span><?php esc_html_e('Word Count', 'ai-article-publisher'); ?></span>
-                            <input type="number" id="aia-manual-word-count" min="300" max="5000" value="1200" />
-                        </label>
-                        <label class="aia-field">
-                            <span><?php esc_html_e('Publish Mode', 'ai-article-publisher'); ?></span>
-                            <select id="aia-manual-status">
-                                <option value="draft"><?php esc_html_e('Draft', 'ai-article-publisher'); ?></option>
-                                <option value="publish"><?php esc_html_e('Publish Now', 'ai-article-publisher'); ?>
-                                </option>
-                                <option value="future"><?php esc_html_e('Schedule', 'ai-article-publisher'); ?></option>
-                            </select>
-                        </label>
-                        <label class="aia-field">
-                            <span><?php esc_html_e('Schedule Date/Time', 'ai-article-publisher'); ?></span>
-                            <input type="datetime-local" id="aia-manual-schedule" disabled="disabled" />
-                        </label>
-                        <label class="aia-field">
-                            <span><?php esc_html_e('In-Post Images', 'ai-article-publisher'); ?></span>
-                            <input type="number" id="aia-manual-inline-images" min="0" max="10" value="0" />
-                        </label>
-                    </div>
-                    <div class="aia-links">
-                        <div class="aia-links__header">
-                            <h3><?php esc_html_e('Hyperlinks', 'ai-article-publisher'); ?></h3>
-                            <button type="button" class="button"
-                                id="aia-add-link"><?php esc_html_e('Add Link', 'ai-article-publisher'); ?></button>
-                        </div>
-                        <div id="aia-links-list"></div>
-                        <template id="aia-link-row-template">
-                            <div class="aia-link-row">
-                                <label class="aia-field">
-                                    <span><?php esc_html_e('URL', 'ai-article-publisher'); ?></span>
-                                    <input type="url" class="aia-link-url" />
-                                </label>
-                                <label class="aia-field">
-                                    <span><?php esc_html_e('Anchor Text', 'ai-article-publisher'); ?></span>
-                                    <input type="text" class="aia-link-anchor" />
-                                </label>
-                                <label class="aia-field">
-                                    <span><?php esc_html_e('Follow Type', 'ai-article-publisher'); ?></span>
-                                    <select class="aia-link-follow">
-                                        <option value="dofollow">
-                                            <?php esc_html_e('DoFollow', 'ai-article-publisher'); ?></option>
-                                        <option value="nofollow">
-                                            <?php esc_html_e('NoFollow', 'ai-article-publisher'); ?></option>
-                                    </select>
-                                </label>
-                                <label class="aia-checkbox aia-checkbox--inline">
-                                    <input type="checkbox" class="aia-link-required" checked="checked" />
-                                    <span><?php esc_html_e('Required', 'ai-article-publisher'); ?></span>
-                                </label>
-                                <button type="button"
-                                    class="button-link-delete aia-link-remove"><?php esc_html_e('Remove', 'ai-article-publisher'); ?></button>
-                            </div>
-                        </template>
-                    </div>
-                    <div class="aia-actions">
-                        <button type="button" class="button button-primary"
-                            id="aia-generate-draft"><?php esc_html_e('Generate Draft', 'ai-article-publisher'); ?></button>
-                        <button type="button" class="button"
-                            id="aia-generate-image"><?php esc_html_e('Generate Image', 'ai-article-publisher'); ?></button>
-                        <button type="button" class="button button-secondary"
-                            id="aia-publish-manual"><?php esc_html_e('Publish To WordPress', 'ai-article-publisher'); ?></button>
-                    </div>
-                    <div class="aia-form-grid">
-                        <label class="aia-field aia-field--full">
-                            <span><?php esc_html_e('Excerpt', 'ai-article-publisher'); ?></span>
-                            <textarea id="aia-manual-excerpt" rows="4"></textarea>
-                        </label>
-                        <label class="aia-field aia-field--full">
-                            <span><?php esc_html_e('Suggested Tags', 'ai-article-publisher'); ?></span>
-                            <input type="text" id="aia-manual-tags"
-                                placeholder="<?php esc_attr_e('Comma-separated tags', 'ai-article-publisher'); ?>" />
-                        </label>
-                        <label class="aia-field aia-field--full">
-                            <span><?php esc_html_e('Generated HTML', 'ai-article-publisher'); ?></span>
-                            <textarea id="aia-manual-html" rows="18"></textarea>
-                        </label>
-                    </div>
-                    <input type="hidden" id="aia-manual-image-base64" />
-                    <input type="hidden" id="aia-manual-image-mime" />
-                </div>
-
-                <div class="aia-tabpanel" data-aia-panel="google">
-                    <div class="aia-form-grid">
-                        <label class="aia-field aia-field--full">
-                            <span><?php esc_html_e('Google Doc Link Or ID', 'ai-article-publisher'); ?></span>
-                            <input type="text" id="aia-google-document"
-                                placeholder="https://docs.google.com/document/d/..." />
-                        </label>
-                        <label class="aia-field">
-                            <span><?php esc_html_e('Publish Mode', 'ai-article-publisher'); ?></span>
-                            <select id="aia-google-status">
-                                <option value="draft"><?php esc_html_e('Draft', 'ai-article-publisher'); ?></option>
-                                <option value="publish"><?php esc_html_e('Publish Now', 'ai-article-publisher'); ?>
-                                </option>
-                                <option value="future"><?php esc_html_e('Schedule', 'ai-article-publisher'); ?></option>
-                            </select>
-                        </label>
-                        <label class="aia-field">
-                            <span><?php esc_html_e('Schedule Date/Time', 'ai-article-publisher'); ?></span>
-                            <input type="datetime-local" id="aia-google-schedule" disabled="disabled" />
-                        </label>
-                    </div>
-                    <div class="aia-note">
-                        <?php esc_html_e('Use a public Google Doc link. Private docs must be shared as "Anyone with the link can view" or published to the web.', 'ai-article-publisher'); ?>
-                    </div>
-                    <div class="aia-actions">
-                        <button type="button" class="button button-primary"
-                            id="aia-publish-google"><?php esc_html_e('Import And Publish', 'ai-article-publisher'); ?></button>
-                    </div>
-                </div>
-
-                <div class="aia-tabpanel" data-aia-panel="news">
-                    <div class="aia-form-grid">
-                        <label class="aia-field">
-                            <span><?php esc_html_e('News Category', 'ai-article-publisher'); ?></span>
-                            <select id="aia-news-category">
-                                <?php foreach ($this->get_news_categories() as $news_category) : ?>
-                                <option value="<?php echo esc_attr($news_category); ?>"
-                                    <?php selected('technology', $news_category); ?>>
-                                    <?php echo esc_html($news_category); ?></option>
-                                <?php endforeach; ?>
-                            </select>
-                        </label>
-                        <label class="aia-field">
-                            <span><?php esc_html_e('Keyword Filter', 'ai-article-publisher'); ?></span>
-                            <input type="text" id="aia-news-query" />
-                        </label>
-                        <label class="aia-field">
-                            <span><?php esc_html_e('Language', 'ai-article-publisher'); ?></span>
-                            <input type="text" id="aia-news-language" value="en" />
-                        </label>
-                        <label class="aia-field">
-                            <span><?php esc_html_e('Max Articles', 'ai-article-publisher'); ?></span>
-                            <input type="number" id="aia-news-max-articles" min="1" max="5" value="1" />
-                        </label>
-                        <label class="aia-field">
-                            <span><?php esc_html_e('Tone', 'ai-article-publisher'); ?></span>
-                            <select id="aia-news-tone">
-                                <?php foreach ($this->get_tone_options() as $tone_option) : ?>
-                                <option value="<?php echo esc_attr($tone_option); ?>"
-                                    <?php selected($settings['default_tone'], $tone_option); ?>>
-                                    <?php echo esc_html($tone_option); ?></option>
-                                <?php endforeach; ?>
-                            </select>
-                        </label>
-                        <label class="aia-field">
-                            <span><?php esc_html_e('Word Count', 'ai-article-publisher'); ?></span>
-                            <input type="number" id="aia-news-word-count" min="300" max="5000" value="1200" />
-                        </label>
-                        <label class="aia-field">
-                            <span><?php esc_html_e('Publish Mode', 'ai-article-publisher'); ?></span>
-                            <select id="aia-news-status">
-                                <option value="publish"><?php esc_html_e('Publish Now', 'ai-article-publisher'); ?>
-                                </option>
-                                <option value="future"><?php esc_html_e('Schedule', 'ai-article-publisher'); ?></option>
-                            </select>
-                        </label>
-                        <label class="aia-field">
-                            <span><?php esc_html_e('Schedule Date/Time', 'ai-article-publisher'); ?></span>
-                            <input type="datetime-local" id="aia-news-schedule" disabled="disabled" />
-                        </label>
-                        <label class="aia-field">
-                            <span><?php esc_html_e('In-Post Images', 'ai-article-publisher'); ?></span>
-                            <input type="number" id="aia-news-inline-images" min="0" max="10" value="0" />
-                        </label>
-                    </div>
-                    <div class="aia-actions">
-                        <button type="button" class="button button-primary"
-                            id="aia-run-news"><?php esc_html_e('Run News Autopilot', 'ai-article-publisher'); ?></button>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <div class="aia-sidebar">
-            <div class="aia-card">
-                <div class="aia-card__header">
-                    <h2><?php esc_html_e('Generated Image', 'ai-article-publisher'); ?></h2>
-                    <p><?php esc_html_e('Featured image generated by OpenAI or fetched from the Google Doc.', 'ai-article-publisher'); ?>
-                    </p>
-                </div>
-                <div id="aia-image-wrap" class="aia-image-wrap" hidden>
-                    <img id="aia-image-preview" alt="" />
-                </div>
-            </div>
-            <div class="aia-card">
-                <div class="aia-card__header">
-                    <h2><?php esc_html_e('Result', 'ai-article-publisher'); ?></h2>
-                    <p><?php esc_html_e('Publish and import responses appear here.', 'ai-article-publisher'); ?></p>
-                </div>
-                <pre id="aia-result" class="aia-result">No actions run yet.</pre>
-            </div>
-            <div class="aia-card">
-                <div class="aia-card__header">
-                    <h2><?php esc_html_e('Article Preview', 'ai-article-publisher'); ?></h2>
-                    <p><?php esc_html_e('Live preview of the manual draft HTML.', 'ai-article-publisher'); ?></p>
-                </div>
-                <div id="aia-preview" class="aia-preview"></div>
-            </div>
-        </div>
-    </div>
-</div>
-<?php
 	}
 
 	public function ajax_generate_article()
@@ -599,6 +179,70 @@ final class AI_Article_Publisher
 			$title = $this->require_text(isset($payload['title']) ? $payload['title'] : '', 'Title is required.', 3);
 			$brief = $this->require_text(isset($payload['brief']) ? $payload['brief'] : '', 'Brief is required.', 10);
 			wp_send_json_success($this->generate_featured_image(array('title' => $title, 'brief' => $brief)));
+		} catch (Throwable $error) {
+			$this->send_exception($error);
+		}
+	}
+
+	public function ajax_generate_claude_prompt()
+	{
+		$this->guard_ajax('edit_posts');
+
+		try {
+			$payload = $this->read_payload();
+			$input = $this->sanitize_manual_claude_input($payload);
+			$prompt = $this->build_claude_desktop_prompt($input);
+			$this->add_log('Claude Desktop Manual', 'generate_claude_prompt', 'success', '', 0);
+			wp_send_json_success(array('prompt' => $prompt));
+		} catch (Throwable $error) {
+			$this->send_exception($error);
+		}
+	}
+
+	public function ajax_validate_claude_json()
+	{
+		$this->guard_ajax('edit_posts');
+
+		try {
+			$payload = $this->read_payload();
+			$json = isset($payload['json']) ? (string) $payload['json'] : '';
+			$links = $this->sanitize_manual_links_from_payload($payload);
+			$parsed = $this->parse_json_from_model($json);
+			$article = $this->sanitize_generated_article_payload(
+				$parsed,
+				isset($payload['title']) ? $this->sanitize_text($payload['title']) : 'Claude article',
+				isset($payload['keyword']) ? $this->sanitize_text($payload['keyword']) : ''
+			);
+			$article['html'] = wp_kses_post($article['html']);
+			$article['validation'] = $this->validate_article_payload($article['html'], $article['meta'], $links);
+			$this->add_log('Claude Desktop Manual', 'validate_claude_json', 'success', '', 0);
+			wp_send_json_success($article);
+		} catch (Throwable $error) {
+			$this->add_log('Claude Desktop Manual', 'validate_claude_json', 'error', $error->getMessage(), 0);
+			$this->send_exception($error);
+		}
+	}
+
+	public function ajax_ai_tool()
+	{
+		$this->guard_ajax('edit_posts');
+
+		try {
+			$payload = $this->read_payload();
+			$tool = sanitize_key(isset($payload['tool']) ? $payload['tool'] : '');
+			$title = $this->sanitize_text(isset($payload['title']) ? $payload['title'] : '');
+			$brief = $this->sanitize_text(isset($payload['brief']) ? $payload['brief'] : '');
+			$html = wp_kses_post(isset($payload['html']) ? (string) $payload['html'] : '');
+			$focus_keyword = $this->sanitize_text(isset($payload['focusKeyword']) ? $payload['focusKeyword'] : '');
+			$prompt = $this->build_article_tool_prompt($tool, $title, $brief, $html, $focus_keyword);
+			$result = $this->ai_text_completion(
+				array(
+					array('role' => 'system', 'content' => 'You are a senior WordPress SEO editor. Return only the requested content with no preamble.'),
+					array('role' => 'user', 'content' => $prompt),
+				),
+				array('temperature' => 0.35, 'action' => 'tool_' . $tool)
+			);
+			wp_send_json_success(array('tool' => $tool, 'provider' => $result['providerLabel'], 'content' => trim($result['content'])));
 		} catch (Throwable $error) {
 			$this->send_exception($error);
 		}
@@ -695,6 +339,104 @@ final class AI_Article_Publisher
 		);
 	}
 
+	private function sanitize_manual_claude_input($payload)
+	{
+		return array(
+			'title' => $this->require_text(isset($payload['title']) ? $payload['title'] : '', 'Title is required.', 3),
+			'keyword' => $this->sanitize_text(isset($payload['keyword']) ? $payload['keyword'] : ''),
+			'tone' => $this->sanitize_text(isset($payload['tone']) ? $payload['tone'] : 'Professional'),
+			'articleType' => $this->sanitize_text(isset($payload['articleType']) ? $payload['articleType'] : 'SEO article'),
+			'country' => $this->sanitize_text(isset($payload['country']) ? $payload['country'] : ''),
+			'audience' => $this->sanitize_text(isset($payload['audience']) ? $payload['audience'] : ''),
+			'wordCount' => $this->sanitize_int(isset($payload['wordCount']) ? $payload['wordCount'] : 1200, 300, 5000),
+			'requiredLinks' => $this->sanitize_csv_strings(isset($payload['requiredLinks']) ? $payload['requiredLinks'] : ''),
+			'optionalLinks' => $this->sanitize_csv_strings(isset($payload['optionalLinks']) ? $payload['optionalLinks'] : ''),
+			'seoInstructions' => $this->sanitize_text(isset($payload['seoInstructions']) ? $payload['seoInstructions'] : ''),
+		);
+	}
+
+	private function sanitize_manual_links_from_payload($payload)
+	{
+		$input = array(
+			'links' => array(),
+			'title' => isset($payload['title']) ? $payload['title'] : 'Manual article',
+			'brief' => 'Manual Claude validation',
+			'focusKeyword' => isset($payload['keyword']) ? $payload['keyword'] : '',
+			'tone' => 'Professional',
+			'wordCount' => 1200,
+			'keywords' => array(),
+		);
+		if (!empty($payload['links']) && is_array($payload['links'])) {
+			$input['links'] = $payload['links'];
+			return $this->sanitize_generate_article_input($input)['links'];
+		}
+
+		$links = array();
+		foreach (array('requiredLinks' => true, 'optionalLinks' => false) as $key => $required) {
+			foreach ($this->sanitize_csv_strings(isset($payload[$key]) ? $payload[$key] : '') as $link_value) {
+				if (!filter_var($link_value, FILTER_VALIDATE_URL)) {
+					continue;
+				}
+				$links[] = array(
+					'url' => $link_value,
+					'anchorText' => $link_value,
+					'required' => $required,
+					'followType' => 'dofollow',
+				);
+			}
+		}
+		return $links;
+	}
+
+	private function build_claude_desktop_prompt($input)
+	{
+		return implode(
+			"\n",
+			array(
+				'You are a senior SEO editor creating a WordPress-ready article.',
+				'Return ONLY valid JSON. Do not include markdown fences, explanations, comments, or text outside the JSON.',
+				'Use this exact JSON shape:',
+				'{',
+				'  "html": "...",',
+				'  "meta": {',
+				'    "title": "...",',
+				'    "excerpt": "...",',
+				'    "suggestedTags": [],',
+				'    "seo": {',
+				'      "seoTitle": "...",',
+				'      "metaDescription": "...",',
+				'      "focusKeyword": "...",',
+				'      "additionalKeywords": [],',
+				'      "canonicalUrl": "",',
+				'      "og": { "title": "", "description": "", "imageUrl": "" },',
+				'      "twitter": { "title": "", "description": "", "imageUrl": "" }',
+				'    }',
+				'  }',
+				'}',
+				'',
+				'Article requirements:',
+				'- html must be valid WordPress-ready HTML only.',
+				'- Use h2/h3 headings, short paragraphs, useful examples, a conclusion, and an FAQ section.',
+				'- Keep the voice natural and professional. Avoid generic AI filler and keyword stuffing.',
+				'- Include every required link exactly once. Use the URL exactly as provided.',
+				'- Optional links may be included only when natural.',
+				'- Create keyword suggestions inside meta.seo.additionalKeywords.',
+				'- Keep seoTitle near 50-60 characters and metaDescription near 140-155 characters when possible.',
+				'',
+				'Title: ' . $input['title'],
+				'Focus keyword: ' . $input['keyword'],
+				'Tone: ' . $input['tone'],
+				'Article type: ' . $input['articleType'],
+				'Country or market: ' . $input['country'],
+				'Audience: ' . $input['audience'],
+				'Target word count: ' . $input['wordCount'],
+				'Required links: ' . (empty($input['requiredLinks']) ? 'None' : implode(', ', $input['requiredLinks'])),
+				'Optional links: ' . (empty($input['optionalLinks']) ? 'None' : implode(', ', $input['optionalLinks'])),
+				'SEO instructions: ' . ($input['seoInstructions'] ? $input['seoInstructions'] : 'Use best-practice SEO without over-optimization.'),
+			)
+		);
+	}
+
 	private function sanitize_status($status)
 	{
 		$status = $this->sanitize_text($status);
@@ -720,6 +462,20 @@ final class AI_Article_Publisher
 			throw new AI_Article_Publisher_Error('Invalid news category.', 400);
 		}
 		return $category;
+	}
+
+	private function sanitize_provider_order($value)
+	{
+		$providers = $this->sanitize_csv_strings($value);
+		$clean = array();
+		foreach ($providers as $provider) {
+			$provider = sanitize_key($provider);
+			if (in_array($provider, $this->get_provider_ids(), true) && 'claude_desktop_manual' !== $provider) {
+				$clean[] = $provider;
+			}
+		}
+		$clean = array_values(array_unique($clean));
+		return empty($clean) ? 'openai,claude_api' : implode(',', $clean);
 	}
 
 	private function sanitize_scheduled_at($value, $status)
@@ -838,7 +594,10 @@ final class AI_Article_Publisher
 
 	private function sanitize_csv_strings($value)
 	{
-		$parts = is_array($value) ? $value : explode(',', (string) $value);
+		$parts = is_array($value) ? $value : preg_split('/[\r\n,]+/', (string) $value);
+		if (!is_array($parts)) {
+			$parts = array();
+		}
 		$clean = array();
 		foreach ($parts as $part) {
 			$item = $this->sanitize_text($part);
@@ -911,63 +670,109 @@ final class AI_Article_Publisher
 		return $decoded;
 	}
 
-	private function openai_chat_completion($messages, $temperature)
+	private function get_provider($provider_id)
 	{
 		$settings = $this->get_settings();
-		$api_key = trim((string) $settings['openai_api_key']);
-		$model = trim((string) $settings['openai_text_model']);
-
-		if (!$api_key) {
-			throw new AI_Article_Publisher_Error('OpenAI API key is missing. Save it in the plugin settings first.', 500);
+		switch ($provider_id) {
+			case 'claude_api':
+				return new AIA_Claude_Api_Provider($settings);
+			case 'claude_desktop_manual':
+				return new AIA_Manual_Claude_Provider($settings);
+			case 'openai':
+			default:
+				return new AIA_OpenAI_Provider($settings);
 		}
-		if (!$model) {
-			$model = self::DEFAULT_TEXT_MODEL;
-		}
+	}
 
-		$response = wp_remote_post(
-			'https://api.openai.com/v1/chat/completions',
+	private function get_provider_order($requested_provider = '')
+	{
+		$settings = $this->get_settings();
+		$requested_provider = sanitize_key($requested_provider ? $requested_provider : $settings['default_provider']);
+		$order = array();
+		if ($requested_provider && 'claude_desktop_manual' !== $requested_provider) {
+			$order[] = $requested_provider;
+		}
+		foreach ($this->sanitize_csv_strings($settings['provider_fallback_order']) as $provider) {
+			$provider = sanitize_key($provider);
+			if ('claude_desktop_manual' !== $provider && in_array($provider, $this->get_provider_ids(), true)) {
+				$order[] = $provider;
+			}
+		}
+		return array_values(array_unique($order));
+	}
+
+	private function ai_text_completion($messages, $options = array())
+	{
+		$settings = $this->get_settings();
+		$options = wp_parse_args(
+			$options,
 			array(
-				'timeout' => 120,
-				'headers' => array(
-					'Authorization' => 'Bearer ' . $api_key,
-					'Content-Type' => 'application/json',
-				),
-				'body' => wp_json_encode(
-					array(
-						'model' => $model,
-						'temperature' => $temperature,
-						'messages' => $messages,
-					)
-				),
+				'provider' => '',
+				'temperature' => (float) $settings['temperature'],
+				'max_tokens' => (int) $settings['max_tokens'],
+				'action' => 'text_generation',
 			)
 		);
+		$last_error = null;
 
-		$decoded = $this->decode_remote_json($response, 'OpenAI chat completion request failed.');
-		$content = isset($decoded['choices'][0]['message']['content']) ? $decoded['choices'][0]['message']['content'] : '';
-		if (is_array($content)) {
-			$parts = array();
-			foreach ($content as $item) {
-				if (is_array($item) && isset($item['text'])) {
-					$parts[] = (string) $item['text'];
-				}
+		foreach ($this->get_provider_order($options['provider']) as $provider_id) {
+			try {
+				$provider = $this->get_provider($provider_id);
+				$content = $provider->generate_text($messages, $options);
+				$this->add_log($provider->get_label(), $options['action'], 'success', '', 0);
+				return array(
+					'provider' => $provider_id,
+					'providerLabel' => $provider->get_label(),
+					'content' => $content,
+				);
+			} catch (Throwable $error) {
+				$last_error = $error;
+				$this->add_log($provider_id, $options['action'], 'error', $error->getMessage(), 0);
 			}
-			$content = implode("\n", $parts);
 		}
 
-		$content = is_string($content) ? trim($content) : '';
-		if (!$content) {
-			throw new AI_Article_Publisher_Error('OpenAI returned an empty draft response.', 502, $decoded);
+		if ($last_error) {
+			throw $last_error;
 		}
+		throw new AI_Article_Publisher_Error('No API provider is configured. Save an OpenAI or Claude API key first.', 500);
+	}
 
-		return $content;
+	private function add_log($provider, $action, $status, $error_message = '', $post_id = 0)
+	{
+		$logs = get_option(self::LOG_OPTION_KEY, array());
+		if (!is_array($logs)) {
+			$logs = array();
+		}
+		array_unshift(
+			$logs,
+			array(
+				'date' => current_time('mysql'),
+				'provider' => sanitize_text_field($provider),
+				'action' => sanitize_text_field($action),
+				'status' => sanitize_text_field($status),
+				'error' => sanitize_text_field($error_message),
+				'postId' => (int) $post_id,
+			)
+		);
+		update_option(self::LOG_OPTION_KEY, array_slice($logs, 0, 100), false);
+	}
+
+	private function openai_chat_completion($messages, $temperature)
+	{
+		$result = $this->ai_text_completion($messages, array('temperature' => $temperature, 'action' => 'article_generation'));
+		return $result['content'];
 	}
 
 	private function openai_image_generation($prompt)
 	{
 		$settings = $this->get_settings();
 		$api_key = trim((string) $settings['openai_api_key']);
+		$model = trim((string) $settings['openai_image_model']);
 		if (!$api_key) {
 			throw new AI_Article_Publisher_Error('OpenAI API key is missing. Save it in the plugin settings first.', 500);
+		}
+		if (!$model) {
+			$model = self::IMAGE_MODEL;
 		}
 
 		$response = wp_remote_post(
@@ -980,7 +785,7 @@ final class AI_Article_Publisher
 				),
 				'body' => wp_json_encode(
 					array(
-						'model' => self::IMAGE_MODEL,
+						'model' => $model,
 						'prompt' => $prompt,
 						'size' => '1536x1024',
 					)
@@ -1013,12 +818,12 @@ final class AI_Article_Publisher
 		$start = strpos((string) $content, '{');
 		$end = strrpos((string) $content, '}');
 		if (false === $start || false === $end || $end <= $start) {
-			throw new AI_Article_Publisher_Error('OpenAI response did not contain valid JSON.', 502);
+			throw new AI_Article_Publisher_Error('AI response did not contain valid JSON.', 502);
 		}
 
 		$decoded = json_decode(substr((string) $content, $start, ($end - $start + 1)), true);
 		if (!is_array($decoded)) {
-			throw new AI_Article_Publisher_Error('Failed to parse OpenAI JSON output.', 502, $content);
+			throw new AI_Article_Publisher_Error('Failed to parse AI JSON output.', 502, $content);
 		}
 
 		return $decoded;
@@ -1136,7 +941,7 @@ final class AI_Article_Publisher
 	{
 		$html = $this->require_text(isset($parsed['html']) ? $parsed['html'] : '', 'Generated HTML is missing.', 40);
 		if (false !== strpos($html, '```')) {
-			throw new AI_Article_Publisher_Error('OpenAI returned markdown fences instead of pure HTML.', 502);
+			throw new AI_Article_Publisher_Error('AI returned markdown fences instead of pure HTML.', 502);
 		}
 
 		$meta = isset($parsed['meta']) && is_array($parsed['meta']) ? $parsed['meta'] : array();
@@ -1158,6 +963,7 @@ final class AI_Article_Publisher
 					'seoTitle' => $this->normalize_meta_text(isset($seo['seoTitle']) ? $seo['seoTitle'] : ''),
 					'metaDescription' => $this->normalize_meta_text(isset($seo['metaDescription']) ? $seo['metaDescription'] : ''),
 					'focusKeyword' => $this->normalize_meta_text(isset($seo['focusKeyword']) ? $seo['focusKeyword'] : ''),
+					'additionalKeywords' => $this->sanitize_string_list(isset($seo['additionalKeywords']) ? $seo['additionalKeywords'] : array()),
 					'canonicalUrl' => $this->sanitize_optional_url(isset($seo['canonicalUrl']) ? $seo['canonicalUrl'] : ''),
 					'og' => array(
 						'title' => $this->normalize_meta_text(isset($seo['og']['title']) ? $seo['og']['title'] : ''),
@@ -1189,6 +995,7 @@ final class AI_Article_Publisher
 		$meta_description = $this->clean_summary_text(isset($seo_payload['metaDescription']) ? $seo_payload['metaDescription'] : '', $fallback_excerpt ? $fallback_excerpt : $fallback_title, 155);
 		$focus_keyword = $this->normalize_meta_text(isset($seo_payload['focusKeyword']) ? $seo_payload['focusKeyword'] : '');
 		$canonical_url = $this->sanitize_optional_url(isset($seo_payload['canonicalUrl']) ? $seo_payload['canonicalUrl'] : '');
+		$additional_keywords = array_slice($this->sanitize_string_list(isset($seo_payload['additionalKeywords']) ? $seo_payload['additionalKeywords'] : array()), 0, 12);
 		$og = isset($seo_payload['og']) && is_array($seo_payload['og']) ? $seo_payload['og'] : array();
 		$twitter = isset($seo_payload['twitter']) && is_array($seo_payload['twitter']) ? $seo_payload['twitter'] : array();
 
@@ -1213,6 +1020,7 @@ final class AI_Article_Publisher
 			'seoTitle' => $seo_title,
 			'metaDescription' => $meta_description,
 			'focusKeyword' => $focus_keyword,
+			'additionalKeywords' => $additional_keywords,
 			'canonicalUrl' => $canonical_url,
 			'og' => array(
 				'title' => $og_title,
@@ -1225,6 +1033,77 @@ final class AI_Article_Publisher
 				'imageUrl' => $twitter_image_url,
 			),
 		);
+	}
+
+	private function validate_article_payload($html, $meta, $links)
+	{
+		$warnings = array();
+		$errors = array();
+		$text = $this->strip_html_text($html);
+		if (strlen($text) < 120) {
+			$errors[] = 'Post content is too short or empty.';
+		}
+
+		$link_validation = $this->validate_required_links($html, $links);
+		if (!empty($link_validation['missing'])) {
+			$errors[] = 'One or more required links are missing.';
+		}
+		if (!empty($link_validation['duplicateRequired'])) {
+			$errors[] = 'One or more required links appear more than once.';
+		}
+
+		$seo = isset($meta['seo']) && is_array($meta['seo']) ? $meta['seo'] : array();
+		$seo_title = isset($seo['seoTitle']) ? $this->normalize_meta_text($seo['seoTitle']) : '';
+		$meta_description = isset($seo['metaDescription']) ? $this->normalize_meta_text($seo['metaDescription']) : '';
+		$focus_keyword = isset($seo['focusKeyword']) ? $this->normalize_meta_text($seo['focusKeyword']) : '';
+
+		if (strlen($seo_title) > 65) {
+			$warnings[] = 'SEO title is longer than the usual 60-65 character target.';
+		}
+		if (strlen($meta_description) > 160 || strlen($meta_description) < 120) {
+			$warnings[] = 'Meta description is outside the usual 120-160 character target.';
+		}
+		if ($focus_keyword && false === stripos($text, $focus_keyword)) {
+			$warnings[] = 'Focus keyword was not found naturally in the article body.';
+		}
+		if (!$focus_keyword) {
+			$warnings[] = 'Focus keyword is empty.';
+		}
+
+		return array(
+			'ok' => empty($errors),
+			'errors' => $errors,
+			'warnings' => $warnings,
+			'links' => $link_validation,
+		);
+	}
+
+	private function build_article_tool_prompt($tool, $title, $brief, $html, $focus_keyword)
+	{
+		$context = implode(
+			"\n",
+			array(
+				'Title: ' . ($title ? $title : 'Untitled'),
+				'Brief: ' . ($brief ? $brief : 'No brief supplied.'),
+				'Focus keyword: ' . ($focus_keyword ? $focus_keyword : 'Not supplied'),
+				'Current HTML: ' . ($html ? $this->truncate($this->strip_html_text($html), 3000) : 'No current draft supplied.'),
+			)
+		);
+		$prompts = array(
+			'outline' => 'Generate a practical SEO article outline with h2/h3 headings and bullet notes.',
+			'improve_draft' => 'Improve the current draft for clarity, flow, search intent, and originality. Return WordPress-ready HTML only.',
+			'humanize' => 'Rewrite the current draft to sound more natural, specific, and human while preserving meaning. Return WordPress-ready HTML only.',
+			'rewrite_intro' => 'Rewrite only the introduction. Return HTML for the new introduction only.',
+			'faq' => 'Generate a concise FAQ section in WordPress-ready HTML using h2/h3 and paragraph tags.',
+			'meta_only' => 'Generate JSON only with seoTitle, metaDescription, focusKeyword, additionalKeywords, og, and twitter fields.',
+			'social_captions' => 'Generate 5 social captions for Facebook/X/LinkedIn with a professional tone.',
+			'image_prompt' => 'Generate one featured image prompt for a clean editorial image. No text overlays, no logos, no watermarks.',
+			'full_article' => 'Generate a full WordPress-ready HTML article using the context and SEO best practices.',
+		);
+		if (empty($prompts[$tool])) {
+			throw new AI_Article_Publisher_Error('Unknown article quality tool.', 400);
+		}
+		return $prompts[$tool] . "\n\n" . $context;
 	}
 
 	private function generate_featured_image($input)
@@ -1365,7 +1244,7 @@ final class AI_Article_Publisher
 			$payload = $this->read_payload();
 			$title = $this->require_text(isset($payload['title']) ? $payload['title'] : '', 'Title is required.', 3);
 			$brief = $this->sanitize_text(isset($payload['brief']) ? $payload['brief'] : '');
-			$html = $this->require_text(isset($payload['html']) ? $payload['html'] : '', 'Generated HTML is required.', 40);
+			$html = wp_kses_post($this->require_text(isset($payload['html']) ? $payload['html'] : '', 'Generated HTML is required.', 40));
 			$excerpt = $this->require_text(isset($payload['excerpt']) ? $payload['excerpt'] : '', 'Excerpt is required.', 1);
 			$status = $this->sanitize_status(isset($payload['status']) ? $payload['status'] : 'draft');
 			$scheduled_at = $this->sanitize_scheduled_at(isset($payload['scheduledAt']) ? $payload['scheduledAt'] : '', $status);
@@ -1373,6 +1252,7 @@ final class AI_Article_Publisher
 			$selected_category_ids = $this->sanitize_int_array(isset($payload['selectedCategoryIds']) ? $payload['selectedCategoryIds'] : array());
 			$new_category_name = $this->sanitize_text(isset($payload['newCategoryName']) ? $payload['newCategoryName'] : '');
 			$tags = $this->sanitize_csv_strings(isset($payload['suggestedTags']) ? $payload['suggestedTags'] : '');
+			$links = $this->sanitize_manual_links_from_payload($payload);
 
 			if ($new_category_name) {
 				$selected_category_ids[] = $this->ensure_category($new_category_name);
@@ -1429,6 +1309,14 @@ final class AI_Article_Publisher
 				$excerpt,
 				$featured_image_url
 			);
+			$validation = $this->validate_article_payload(
+				$html_for_publish,
+				array('seo' => $seo_payload),
+				$links
+			);
+			if (empty($validation['ok']) && 'publish' === $status) {
+				throw new AI_Article_Publisher_Error('Publishing blocked by validation errors. Create a draft first or fix the warnings.', 400, $validation);
+			}
 
 			$post = $this->create_post(
 				array(
@@ -1444,6 +1332,7 @@ final class AI_Article_Publisher
 			);
 
 			$seo_update = $this->apply_seo_meta((int) $post['id'], $seo_provider, $seo_payload, $featured_image_url);
+			$this->add_log('WordPress', 'publish_post', 'success', '', (int) $post['id']);
 
 			wp_send_json_success(
 				array(
@@ -1453,9 +1342,11 @@ final class AI_Article_Publisher
 					'categories' => $selected_category_ids,
 					'inlineImages' => $inline_images,
 					'seoUpdate' => $seo_update,
+					'validation' => $validation,
 				)
 			);
 		} catch (Throwable $error) {
+			$this->add_log('WordPress', 'publish_post', 'error', $error->getMessage(), 0);
 			$this->send_exception($error);
 		}
 	}
@@ -1617,6 +1508,7 @@ final class AI_Article_Publisher
 				'_yoast_wpseo_title' => $seo_payload['seoTitle'],
 				'_yoast_wpseo_metadesc' => $seo_payload['metaDescription'],
 				'_yoast_wpseo_focuskw' => $seo_payload['focusKeyword'],
+				'_yoast_wpseo_focuskeywords' => wp_json_encode($seo_payload['additionalKeywords']),
 				'_yoast_wpseo_canonical' => $seo_payload['canonicalUrl'],
 				'_yoast_wpseo_opengraph-title' => $seo_payload['og']['title'],
 				'_yoast_wpseo_opengraph-description' => $seo_payload['og']['description'],
@@ -1630,6 +1522,7 @@ final class AI_Article_Publisher
 				'_aioseo_title' => $seo_payload['seoTitle'],
 				'_aioseo_description' => $seo_payload['metaDescription'],
 				'_aioseo_focus_keyphrase' => $seo_payload['focusKeyword'],
+				'_aioseo_keywords' => implode(',', $seo_payload['additionalKeywords']),
 				'_aioseo_canonical_url' => $seo_payload['canonicalUrl'],
 				'_aioseo_og_title' => $seo_payload['og']['title'],
 				'_aioseo_og_description' => $seo_payload['og']['description'],
@@ -1722,6 +1615,7 @@ final class AI_Article_Publisher
 				(string) $featured_media['source_url']
 			);
 			$seo_update = $this->apply_seo_meta((int) $post['id'], $seo_provider, $seo_payload, (string) $featured_media['source_url']);
+			$this->add_log('Google Docs', 'import_google_doc', 'success', '', (int) $post['id']);
 
 			wp_send_json_success(
 				array(
@@ -1742,6 +1636,7 @@ final class AI_Article_Publisher
 				)
 			);
 		} catch (Throwable $error) {
+			$this->add_log('Google Docs', 'import_google_doc', 'error', $error->getMessage(), 0);
 			$this->send_exception($error);
 		}
 	}
@@ -1810,6 +1705,7 @@ final class AI_Article_Publisher
 					));
 
 					$seo_update = $this->apply_seo_meta((int) $post['id'], $seo_provider, $generated['meta']['seo'], (string) $featured_media['source_url']);
+					$this->add_log('NewsData', 'news_autopilot', 'success', '', (int) $post['id']);
 					$results[] = array(
 						'source' => array('title' => $source['title'], 'link' => $source['link'], 'sourceName' => isset($source['sourceName']) ? $source['sourceName'] : ''),
 						'postId' => (int) $post['id'],
@@ -1821,6 +1717,7 @@ final class AI_Article_Publisher
 						'seoUpdate' => $seo_update,
 					);
 				} catch (Throwable $item_error) {
+					$this->add_log('NewsData', 'news_autopilot', 'error', $item_error->getMessage(), 0);
 					$failures[] = array(
 						'source' => array('title' => $source['title'], 'link' => $source['link']),
 						'error' => $this->format_error($item_error),
@@ -1842,6 +1739,7 @@ final class AI_Article_Publisher
 				'failures' => $failures,
 			));
 		} catch (Throwable $error) {
+			$this->add_log('NewsData', 'news_autopilot', 'error', $error->getMessage(), 0);
 			$this->send_exception($error);
 		}
 	}

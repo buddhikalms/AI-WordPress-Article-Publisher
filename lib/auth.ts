@@ -128,6 +128,7 @@ export const authOptions: NextAuthOptions = {
       const userEmail =
         (user?.email || token.email)?.toString().trim().toLowerCase() || null;
 
+      let databaseUserId: string | null = null;
       if (userEmail) {
         const dbByEmail = await prisma.user.findUnique({
           where: {
@@ -139,11 +140,12 @@ export const authOptions: NextAuthOptions = {
         });
 
         if (dbByEmail?.id) {
-          token.sub = dbByEmail.id;
+          databaseUserId = dbByEmail.id;
+          token.sub = databaseUserId;
         }
       }
 
-      if (user?.id) {
+      if (!databaseUserId && user?.id) {
         token.sub = user.id;
       }
 

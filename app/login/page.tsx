@@ -3,6 +3,7 @@
 import { FormEvent, useState } from "react";
 import { signIn } from "next-auth/react";
 import { useRouter } from "next/navigation";
+import ThemeToggle from "@/components/ThemeToggle";
 
 type Notice = {
   type: "success" | "error" | "info";
@@ -181,6 +182,9 @@ export default function LoginPage() {
 
   return (
     <main className="mx-auto grid min-h-screen w-full max-w-6xl gap-6 px-4 py-8 md:grid-cols-2 md:px-6">
+      <div className="fixed right-4 top-4 z-10">
+        <ThemeToggle />
+      </div>
       <section className="panel p-6">
         <h1 className="text-2xl font-bold text-slate-900">Sign In</h1>
         <p className="mt-2 text-sm text-slate-600">

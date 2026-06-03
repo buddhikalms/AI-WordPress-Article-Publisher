@@ -12,6 +12,7 @@ export interface GoogleDocPostDraft {
   excerpt: string;
   brief: string;
   categories: string[];
+  imageUrls: string[];
   seoTitle?: string;
   metaDescription?: string;
   focusKeyword?: string;
@@ -81,6 +82,16 @@ const stripHtml = (value: string) =>
     .replace(/<[^>]+>/g, " ")
     .replace(/\s+/g, " ")
     .trim();
+
+const decodeHtmlAttribute = (value: string) =>
+  value
+    .replace(/&amp;/g, "&")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">");
+
+const unique = <T>(items: T[]) => [...new Set(items)];
 
 const normalizeOptionalUrl = (value: string) => {
   if (!value.trim()) {
@@ -361,6 +372,71 @@ const parseGoogleDocMarkdown = (markdown: string, fallbackTitle: string) => {
   };
 };
 
+const extractImageUrlsFromHtml = (html: string, baseUrl: string) => {
+  const urls: string[] = [];
+  const imagePattern = /<img\b[^>]*\bsrc\s*=\s*(["'])(.*?)\1/gi;
+  let match: RegExpExecArray | null;
+
+  while ((match = imagePattern.exec(html))) {
+    const rawSrc = decodeHtmlAttribute(match[2]).trim();
+    if (!rawSrc || rawSrc.startsWith("data:")) {
+      continue;
+    }
+    try {
+      const resolved = new URL(rawSrc, baseUrl).toString();
+      if (/^https?:\/\//i.test(resolved)) {
+        urls.push(resolved);
+      }
+    } catch {
+      // Ignore malformed image sources exported by Google Docs.
+    }
+  }
+
+  return unique(urls);
+};
+
+const fetchGoogleDocHtml = async (documentId: string) => {
+  const candidates = [
+    `${GOOGLE_DOCS_BASE_URL}/${documentId}/mobilebasic`,
+    `${GOOGLE_DOCS_BASE_URL}/${documentId}/export?format=html`,
+  ];
+
+  for (const url of candidates) {
+    const response = await fetch(url, { redirect: "follow" });
+    const body = await response.text();
+    if (isAccessWallResponse(response, body)) {
+      continue;
+    }
+    if (!response.ok || !/<img\b/i.test(body)) {
+      continue;
+    }
+
+    const contentType = response.headers.get("content-type")?.toLowerCase() || "";
+    if (contentType.includes("zip")) {
+      continue;
+    }
+
+    return {
+      html: body,
+      url: response.url || url,
+    };
+  }
+
+  return null;
+};
+
+const buildImageFigure = (url: string, title: string) =>
+  `<figure class="wp-block-image size-large"><img src="${escapeHtml(url)}" alt="${escapeHtml(
+    title,
+  )}" loading="lazy" decoding="async" /></figure>`;
+
+const appendImagesIfMissing = (html: string, imageUrls: string[], title: string) => {
+  if (imageUrls.length === 0 || /<img\b/i.test(html)) {
+    return html;
+  }
+  return `${html}\n${imageUrls.map((url) => buildImageFigure(url, title)).join("\n")}`;
+};
+
 export const readGoogleDocPost = async (input: { document: string }) => {
   const documentId = extractDocumentId(input.document);
   const exportUrl = `${GOOGLE_DOCS_BASE_URL}/${documentId}/export?format=txt`;
@@ -392,10 +468,17 @@ export const readGoogleDocPost = async (input: { document: string }) => {
   }
 
   const parsed = parseGoogleDocMarkdown(markdown, "Untitled");
+  const htmlExport = await fetchGoogleDocHtml(documentId);
+  const imageUrls = htmlExport
+    ? extractImageUrlsFromHtml(htmlExport.html, htmlExport.url)
+    : [];
+  const featuredImageUrl = parsed.featuredImageUrl || imageUrls[0];
+  const html = appendImagesIfMissing(parsed.html, imageUrls, parsed.title);
+
   if (!parsed.title.trim()) {
     throw new HttpError(400, "Google Doc is missing a usable title.");
   }
-  if (!parsed.html.trim()) {
+  if (!html.trim()) {
     throw new HttpError(400, "Google Doc is missing usable content.");
   }
 
@@ -403,5 +486,8 @@ export const readGoogleDocPost = async (input: { document: string }) => {
     documentId,
     documentName: parsed.title,
     ...parsed,
+    html,
+    imageUrls,
+    featuredImageUrl,
   } satisfies GoogleDocPostDraft;
 };

@@ -76,6 +76,30 @@ const fetchImageAsBase64 = async (url: string) => {
   };
 };
 
+const escapeRegExp = (value: string) =>
+  value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+const replaceImageSources = (
+  html: string,
+  replacements: Map<string, string>,
+) => {
+  let updated = html;
+  replacements.forEach((nextUrl, originalUrl) => {
+    updated = updated.replace(
+      new RegExp(`(src\\s*=\\s*["'])${escapeRegExp(originalUrl)}(["'])`, "g"),
+      `$1${nextUrl}$2`,
+    );
+    updated = updated.replace(
+      new RegExp(
+        `(src\\s*=\\s*["'])${escapeRegExp(originalUrl.replace(/&/g, "&amp;"))}(["'])`,
+        "g",
+      ),
+      `$1${nextUrl}$2`,
+    );
+  });
+  return updated;
+};
+
 export async function POST(request: Request) {
   try {
     const user = await requireVerifiedUser(request);
@@ -120,23 +144,73 @@ export async function POST(request: Request) {
       categoryIds.add(category.id);
     }
 
-    const featuredImage =
-      draft.featuredImageUrl
-        ? await fetchImageAsBase64(draft.featuredImageUrl)
-        : await generateFeaturedImage({
+    const docImageUrls = [
+      ...new Set(
+        [
+          draft.featuredImageUrl,
+          ...draft.imageUrls,
+        ].filter((url): url is string => Boolean(url)),
+      ),
+    ];
+    const uploadedDocImages: Array<{
+      originalUrl: string;
+      id: number;
+      sourceUrl: string;
+    }> = [];
+    const imageSourceReplacements = new Map<string, string>();
+
+    for (let index = 0; index < docImageUrls.length; index += 1) {
+      const originalUrl = docImageUrls[index];
+      const downloaded = await fetchImageAsBase64(originalUrl);
+      const uploaded = await uploadFeaturedMedia(
+        {
+          imageBase64: downloaded.imageBase64,
+          mimeType: downloaded.mimeType,
+          title: `${draft.title} image ${index + 1}`,
+          filenameSuggestion: `${draft.slug || "google-doc"}-${index + 1}`,
+          altText:
+            index === 0
+              ? `Featured image for ${draft.title}`
+              : `Image ${index + 1} for ${draft.title}`,
+        },
+        wpConfig,
+      );
+
+      uploadedDocImages.push({
+        originalUrl,
+        id: uploaded.id,
+        sourceUrl: uploaded.source_url,
+      });
+      imageSourceReplacements.set(originalUrl, uploaded.source_url);
+    }
+
+    const generatedFeaturedImage =
+      uploadedDocImages.length === 0
+        ? await generateFeaturedImage({
             title: draft.title,
             brief: draft.imagePrompt || draft.brief || draft.excerpt || draft.title,
-          });
+          })
+        : null;
 
-    const featuredMedia = await uploadFeaturedMedia(
-      {
-        imageBase64: featuredImage.imageBase64,
-        mimeType: featuredImage.mimeType,
-        title: draft.title,
-        filenameSuggestion: `${draft.slug || "featured-image"}.png`,
-        altText: `Featured image for ${draft.title}`,
-      },
-      wpConfig,
+    const featuredMedia = uploadedDocImages[0]
+      ? {
+          id: uploadedDocImages[0].id,
+          source_url: uploadedDocImages[0].sourceUrl,
+        }
+      : await uploadFeaturedMedia(
+          {
+            imageBase64: generatedFeaturedImage!.imageBase64,
+            mimeType: generatedFeaturedImage!.mimeType,
+            title: draft.title,
+            filenameSuggestion: `${draft.slug || "featured-image"}.png`,
+            altText: `Featured image for ${draft.title}`,
+          },
+          wpConfig,
+        );
+
+    const htmlForPublish = replaceImageSources(
+      draft.html,
+      imageSourceReplacements,
     );
 
     const scheduledAt =
@@ -145,7 +219,7 @@ export async function POST(request: Request) {
       {
         title: draft.title,
         slug: draft.slug || undefined,
-        html: draft.html,
+        html: htmlForPublish,
         excerpt: draft.excerpt || truncate(stripHtml(draft.html), 160) || draft.title,
         status: payload.status,
         date: scheduledAt,
@@ -203,8 +277,9 @@ export async function POST(request: Request) {
       featuredImage: {
         id: featuredMedia.id,
         sourceUrl: featuredMedia.source_url,
-        source: draft.featuredImageUrl ? "provided" : "generated",
+        source: uploadedDocImages.length > 0 ? "google-doc" : "generated",
       },
+      importedImages: uploadedDocImages,
       categories: Array.from(categoryIds),
       seoUpdate,
       seoFilled: {

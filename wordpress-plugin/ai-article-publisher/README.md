@@ -10,13 +10,29 @@ Standalone WordPress plugin version of the workflows in this repo:
 - NewsData category autopilot with OpenAI rewrites
 - Basic Yoast and AIOSEO post meta updates
 
+## Structure
+
+- `ai-article-publisher.php`: plugin bootstrap plus core publishing and API logic
+- `includes/class-aia-error.php`: shared plugin exception wrapper
+- `includes/admin/class-aia-admin-screen.php`: WordPress admin hooks, asset loading, and screen orchestration
+- `includes/admin/views/`: Studio, Credentials, Documentation, and shared admin view partials
+- `assets/admin.css` and `assets/admin.js`: admin UI styling and interactions
+- `docs/USER-GUIDE.md`: written setup and usage guide
+
 ## Install
 
 1. Copy `wordpress-plugin/ai-article-publisher` to `wp-content/plugins/ai-article-publisher`
 2. Activate **AI Article Publisher** in WordPress
 3. Open **AI Publisher** in the WP admin menu
-4. Save your `OpenAI API Key`
-5. Save your `NewsData API Key` if you want News Autopilot
+4. Open **Credentials** and save your `OpenAI API Key`
+5. Save your `NewsData API Key` there if you want News Autopilot
+6. Return to **Studio** to generate or import posts
+
+## Admin Pages
+
+- `Studio`: shared publish settings plus Manual Studio, Google Doc Import, and News Autopilot
+- `Credentials`: OpenAI and NewsData API keys, model choice, and default tone
+- `Documentation`: quick-start help, workflow guidance, front matter example, and troubleshooting
 
 ## Notes
 

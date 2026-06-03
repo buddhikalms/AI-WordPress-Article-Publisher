@@ -1,0 +1,84 @@
+<div style="width:100%; font-family:Arial, sans-serif; box-sizing:border-box;">
+
+  <div style="display:flex; flex-wrap:wrap; align-items:stretch; border:1px solid #ddd; border-radius:10px; overflow:hidden; background:#fff;">
+
+    <!-- LEFT: BADGE PREVIEW -->
+    <div style="flex:1 1 40%; min-width:280px; padding:30px; background:#fff; display:flex; align-items:center; justify-content:center; border-right:1px solid #ddd;">
+
+      <a id="previewLink" href="https://education.clickdo.co.uk/best-online-tutoring-platforms-uk/" target="_blank" rel="noopener noreferrer" style="text-decoration:none; display:inline-block; text-align:center;">
+
+        <img src="https://education.clickdo.co.uk/wp-content/uploads/2026/05/best-online-tutoring-platforms-uk.png" alt="Best Online Tutoring Platforms UK" style="display:block; margin:0 auto; border:0; max-width:100%; height:auto;">
+
+        <span id="previewName" style="display:block; margin-top:10px; font-size:18px; font-weight:bold; color:#0d0b52;">
+          Your Name Here
+        </span>
+
+        <span style="display:block; margin-top:4px; font-size:13px; color:#666666;">
+          Featured on UK Education Blog
+        </span>
+
+      </a>
+
+    </div>
+
+    <!-- RIGHT: GENERATOR -->
+    <div style="flex:1 1 60%; min-width:300px; background:#fff;">
+
+      <!-- HEADER -->
+      <div style="background:#0d0b52; color:#fff; padding:16px; font-size:16px; font-weight:bold; text-align:center;">
+        Copy Badge Embed Code
+        <br>
+        <span style="font-size:11px; font-weight:normal;">
+          Enter your name, then click Generate Code.
+        </span>
+      </div>
+
+      <!-- INPUT AREA -->
+      <div style="padding:18px; border-bottom:1px solid #ddd;">
+
+        <label for="nameField" style="display:block; margin-bottom:8px; font-size:14px; font-weight:bold; color:#222;">
+          Enter Your Name
+        </label>
+
+        <input
+          type="text"
+          id="nameField"
+          placeholder="Enter your name"
+          style="width:100%; padding:12px; border:1px solid #ccc; border-radius:6px; box-sizing:border-box; font-size:14px; margin-bottom:14px;"
+        >
+
+        <button
+          type="button"
+          onclick="
+            var name=document.getElementById('nameField').value.trim() || 'Your Name Here';
+            document.getElementById('previewName').innerText=name;
+            document.getElementById('embedBox').value='<a href=&quot;https://education.clickdo.co.uk/best-online-tutoring-platforms-uk/&quot; target=&quot;_blank&quot; rel=&quot;noopener noreferrer&quot; style=&quot;text-decoration:none; display:inline-block; text-align:center; font-family:Arial, sans-serif;&quot;>\n  <img src=&quot;https://education.clickdo.co.uk/wp-content/uploads/2026/05/best-online-tutoring-platforms-uk.png&quot; alt=&quot;Best Online Tutoring Platforms UK&quot; width=&quot;220&quot; style=&quot;display:block; margin:0 auto; border:0; max-width:100%; height:auto;&quot;>\n  <span style=&quot;display:block; margin-top:8px; font-size:18px; font-weight:bold; color:#0d0b52;&quot;>'+name+'</span>\n  <span style=&quot;display:block; margin-top:4px; font-size:13px; color:#666666;&quot;>Featured on UK Education Blog</span>\n</a>';
+          "
+          style="background:#0d0b52; color:#fff; border:0; padding:11px 20px; border-radius:6px; font-size:14px; font-weight:bold; cursor:pointer;"
+        >
+          Generate Code
+        </button>
+
+      </div>
+
+      <!-- CODE BOX -->
+      <textarea
+        id="embedBox"
+        style="display:block; width:100%; height:230px; padding:16px; border:none; box-sizing:border-box; font-size:13px; line-height:1.5; color:#222; background:#fafafa; resize:vertical;"
+        readonly
+      ><a href="https://education.clickdo.co.uk/best-online-tutoring-platforms-uk/" target="_blank" rel="noopener noreferrer" style="text-decoration:none; display:inline-block; text-align:center; font-family:Arial, sans-serif;">
+  <img src="https://education.clickdo.co.uk/wp-content/uploads/2026/05/best-online-tutoring-platforms-uk.png" alt="Best Online Tutoring Platforms UK" width="220" style="display:block; margin:0 auto; border:0; max-width:100%; height:auto;">
+  <span style="display:block; margin-top:8px; font-size:18px; font-weight:bold; color:#0d0b52;">Your Name Here</span>
+  <span style="display:block; margin-top:4px; font-size:13px; color:#666666;">Featured on UK Education Blog</span>
+</a></textarea>
+
+      <!-- NOTE -->
+      <div style="text-align:center; font-size:12px; color:#666; padding:10px;">
+        Click inside the box, then press Ctrl+C or Cmd+C to copy.
+      </div>
+
+    </div>
+
+  </div>
+
+</div>

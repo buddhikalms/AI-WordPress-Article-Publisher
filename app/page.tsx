@@ -1,11 +1,14 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { useSession } from "next-auth/react";
+import { signOut, useSession } from "next-auth/react";
 import ArticlePreview from "@/components/ArticlePreview";
+import DashboardLoadError from "@/components/DashboardLoadError";
+import DashboardLoading from "@/components/DashboardLoading";
 import DashboardShell, { type DashboardNavItem } from "@/components/DashboardShell";
+import EmptyState from "@/components/EmptyState";
 import LinkTable from "@/components/LinkTable";
 import SeoFields from "@/components/SeoFields";
 import StatusToast from "@/components/StatusToast";
@@ -87,9 +90,9 @@ const initialLink: HyperlinkInput = {
 };
 
 const workspaceTabs = [
-  ["manual", "Manual Studio", "Generate, review, and publish from a brief."],
-  ["google-doc", "Google Doc Import", "Publish from a single Google Doc link."],
-  ["news", "News Autopilot", "Rewrite and publish category news."],
+  ["manual", "Manual Studio", "Generate, refine, and publish from a structured brief."],
+  ["google-doc", "Google Doc Import", "Ship a document directly from a single share link."],
+  ["news", "News Autopilot", "Turn fresh news into publish-ready posts."],
 ] as const;
 
 const parseKeywords = (keywords: string) =>
@@ -130,12 +133,72 @@ const getApiError = async (response: Response) => {
   }
 };
 
+function MetricCard({
+  label,
+  value,
+  hint,
+  badge,
+}: {
+  label: string;
+  value: string;
+  hint: string;
+  badge?: string;
+}) {
+  return (
+    <div className="panel-muted px-4 py-4">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">
+            {label}
+          </p>
+          <p className="mt-2 text-xl font-semibold text-slate-950">{value}</p>
+          <p className="mt-1 text-xs leading-5 text-slate-500">{hint}</p>
+        </div>
+        {badge ? <span className="badge-neutral">{badge}</span> : null}
+      </div>
+    </div>
+  );
+}
+
+function ResultSummary({
+  label,
+  title,
+  link,
+  status,
+}: {
+  label: string;
+  title: string;
+  link?: string;
+  status?: string;
+}) {
+  return (
+    <div className="panel-muted px-4 py-4">
+      <div className="flex items-center justify-between gap-3">
+        <p className="eyebrow">{label}</p>
+        {status ? <span className="badge-info">{status}</span> : null}
+      </div>
+      <p className="mt-2 text-sm font-semibold text-slate-950">{title}</p>
+      {link ? (
+        <a
+          className="mt-2 block break-all text-xs text-blue-700 underline"
+          href={link}
+          target="_blank"
+          rel="noreferrer"
+        >
+          {link}
+        </a>
+      ) : null}
+    </div>
+  );
+}
+
 export default function HomePage() {
   const router = useRouter();
   const { data: session, status } = useSession();
 
   const [workspaceMode, setWorkspaceMode] = useState<WorkspaceMode>("manual");
   const [account, setAccount] = useState<AccountSummaryState | null>(null);
+  const [accountLoadError, setAccountLoadError] = useState<string | null>(null);
   const [selectedSiteId, setSelectedSiteId] = useState("");
   const [categories, setCategories] = useState<CategoryOption[]>([]);
   const [selectedCategoryIds, setSelectedCategoryIds] = useState<number[]>([]);
@@ -143,7 +206,6 @@ export default function HomePage() {
   const [seoProvider, setSeoProvider] = useState<SEOProvider>("None");
   const [seoPayload, setSeoPayload] = useState<SeoPayload>(initialSeoPayload);
   const [toast, setToast] = useState<ToastState | null>(null);
-
   const [title, setTitle] = useState("");
   const [brief, setBrief] = useState("");
   const [keywords, setKeywords] = useState("");
@@ -157,11 +219,9 @@ export default function HomePage() {
   const [generatedImage, setGeneratedImage] = useState<GeneratedImageState | null>(null);
   const [publishMode, setPublishMode] = useState<PublishMode>("draft");
   const [scheduledAtLocal, setScheduledAtLocal] = useState("");
-
   const [googleDocInput, setGoogleDocInput] = useState("");
   const [googleDocPublishMode, setGoogleDocPublishMode] = useState<PublishMode>("draft");
   const [googleDocScheduledAtLocal, setGoogleDocScheduledAtLocal] = useState("");
-
   const [newsCategory, setNewsCategory] =
     useState<(typeof newsCategoryOptions)[number]>("technology");
   const [newsQuery, setNewsQuery] = useState("");
@@ -169,13 +229,11 @@ export default function HomePage() {
   const [newsMaxArticles, setNewsMaxArticles] = useState(1);
   const [newsPublishMode, setNewsPublishMode] = useState<PublishMode>("publish");
   const [newsScheduledAtLocal, setNewsScheduledAtLocal] = useState("");
-
   const [publishResult, setPublishResult] = useState<PublishResultState | null>(null);
   const [googleDocPublishResult, setGoogleDocPublishResult] =
     useState<GoogleDocPublishResultState | null>(null);
   const [newsAutoPublishResult, setNewsAutoPublishResult] =
     useState<NewsAutoPublishResultState | null>(null);
-
   const [isGeneratingDraft, setIsGeneratingDraft] = useState(false);
   const [isGeneratingImage, setIsGeneratingImage] = useState(false);
   const [isPublishing, setIsPublishing] = useState(false);
@@ -183,21 +241,41 @@ export default function HomePage() {
   const [isAutoPublishingNews, setIsAutoPublishingNews] = useState(false);
   const [isLoadingCategories, setIsLoadingCategories] = useState(false);
 
-  const selectedSite =
-    account?.wordpressSites.find((site) => site.id === selectedSiteId) ?? null;
+  const selectedSite = account?.wordpressSites.find((site) => site.id === selectedSiteId) ?? null;
   const hasSiteConfigured = (account?.wordpressSites.length || 0) > 0;
   const isBusy =
     isGeneratingDraft || isGeneratingImage || isPublishing || isPublishingGoogleDoc || isAutoPublishingNews;
-
   const keywordsCount = parseKeywords(keywords).length;
   const currentSlug = slugifyArticle(title);
 
-  const loadAccount = async () => {
-    const response = await fetch("/api/me");
-    if (!response.ok) {
-      throw new Error(await getApiError(response));
-    }
+  const stats = useMemo(
+    () => [
+      {
+        label: "Active Site",
+        value: selectedSite?.name || "Not selected",
+        hint: selectedSite ? selectedSite.baseUrl : "Choose a publishing target to unlock actions.",
+        badge: selectedSite?.isDefault ? "Default" : undefined,
+      },
+      {
+        label: "Keyword Set",
+        value: `${keywordsCount}`,
+        hint: seoPayload.focusKeyword.trim()
+          ? `Primary focus: ${seoPayload.focusKeyword}`
+          : "Add a focus keyword before generation.",
+      },
+      {
+        label: "Slug Preview",
+        value: title.trim() ? currentSlug || "article" : "--",
+        hint: excerpt.trim() ? "Summary ready for publish." : "Summary appears after generation.",
+      },
+    ],
+    [currentSlug, excerpt, keywordsCount, selectedSite, seoPayload.focusKeyword, title],
+  );
 
+  const loadAccount = async () => {
+    setAccountLoadError(null);
+    const response = await fetch("/api/me");
+    if (!response.ok) throw new Error(await getApiError(response));
     const data = (await response.json()) as {
       user: {
         tokenBalance: number;
@@ -208,7 +286,6 @@ export default function HomePage() {
       wordpressSites: WordPressSiteSummary[];
       defaultWordpressSite: WordPressSiteSummary | null;
     };
-
     setAccount({
       tokenBalance: data.user.tokenBalance,
       role: data.user.role,
@@ -217,7 +294,6 @@ export default function HomePage() {
       wordpressSites: data.wordpressSites || [],
       defaultWordpressSite: data.defaultWordpressSite || null,
     });
-
     setSelectedSiteId((current) =>
       current && (data.wordpressSites || []).some((site) => site.id === current)
         ? current
@@ -229,9 +305,7 @@ export default function HomePage() {
     try {
       setIsLoadingCategories(true);
       const response = await fetch(`/api/wp-categories?siteId=${encodeURIComponent(siteId)}`);
-      if (!response.ok) {
-        throw new Error(await getApiError(response));
-      }
+      if (!response.ok) throw new Error(await getApiError(response));
       const data = (await response.json()) as { categories: CategoryOption[] };
       const nextCategories = data.categories || [];
       setCategories(nextCategories);
@@ -256,14 +330,14 @@ export default function HomePage() {
       router.replace("/login");
       return;
     }
-    if (status !== "authenticated") {
-      return;
-    }
+    if (status !== "authenticated") return;
     void loadAccount().catch((error: unknown) => {
+      const message =
+        error instanceof Error ? error.message : "Failed to load account details.";
+      setAccountLoadError(message);
       setToast({
         type: "error",
-        message:
-          error instanceof Error ? error.message : "Failed to load account details.",
+        message,
       });
     });
   }, [router, status]);
@@ -279,19 +353,13 @@ export default function HomePage() {
   }, [selectedSiteId]);
 
   const syncBalance = (remaining?: number) => {
-    if (typeof remaining !== "number") {
-      return;
-    }
-    setAccount((current) =>
-      current ? { ...current, tokenBalance: remaining } : current,
-    );
+    if (typeof remaining !== "number") return;
+    setAccount((current) => (current ? { ...current, tokenBalance: remaining } : current));
   };
 
   const handleGenerateDraft = async () => {
     try {
-      if (!title.trim() || !brief.trim()) {
-        throw new Error("Title and topic brief are required.");
-      }
+      if (!title.trim() || !brief.trim()) throw new Error("Title and topic brief are required.");
       if (!seoPayload.focusKeyword.trim()) {
         throw new Error("Focus keyword is required before draft generation.");
       }
@@ -299,7 +367,6 @@ export default function HomePage() {
       setPublishResult(null);
       setGoogleDocPublishResult(null);
       setNewsAutoPublishResult(null);
-
       const response = await fetch("/api/generate-article", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -313,17 +380,12 @@ export default function HomePage() {
           links: normalizeLinks(links),
         }),
       });
-
-      if (!response.ok) {
-        throw new Error(await getApiError(response));
-      }
-
+      if (!response.ok) throw new Error(await getApiError(response));
       const data = (await response.json()) as {
         html: string;
         meta: { excerpt: string; suggestedTags: string[]; seo: SeoPayload };
         tokenCharge?: { amount: number; remaining: number };
       };
-
       setGeneratedHtml(data.html);
       setExcerpt(data.meta.excerpt);
       setSuggestedTags(data.meta.suggestedTags || []);
@@ -363,9 +425,7 @@ export default function HomePage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ title: title.trim(), brief: brief.trim() }),
       });
-      if (!response.ok) {
-        throw new Error(await getApiError(response));
-      }
+      if (!response.ok) throw new Error(await getApiError(response));
       const data = (await response.json()) as GeneratedImageState;
       setGeneratedImage(data);
       syncBalance(data.tokenCharge?.remaining);
@@ -387,19 +447,12 @@ export default function HomePage() {
 
   const handlePublishPost = async () => {
     try {
-      if (!selectedSiteId) {
-        throw new Error("Select a WordPress site before publishing.");
-      }
-      if (!generatedHtml.trim()) {
-        throw new Error("Generate a draft before publishing.");
-      }
-      if (!excerpt.trim()) {
-        throw new Error("Excerpt is required before publishing.");
-      }
+      if (!selectedSiteId) throw new Error("Select a WordPress site before publishing.");
+      if (!generatedHtml.trim()) throw new Error("Generate a draft before publishing.");
+      if (!excerpt.trim()) throw new Error("Excerpt is required before publishing.");
       if (publishMode === "future" && !scheduledAtLocal.trim()) {
         throw new Error("Select a future schedule date/time first.");
       }
-
       setIsPublishing(true);
       const response = await fetch("/api/publish", {
         method: "POST",
@@ -411,7 +464,8 @@ export default function HomePage() {
           html: generatedHtml,
           excerpt: excerpt.trim(),
           status: publishMode,
-          scheduledAt: publishMode === "future" ? toIsoFromLocalDateTime(scheduledAtLocal) : undefined,
+          scheduledAt:
+            publishMode === "future" ? toIsoFromLocalDateTime(scheduledAtLocal) : undefined,
           featuredImageBase64: generatedImage?.imageBase64,
           featuredImageMime: generatedImage?.mimeType,
           inPostImageCount,
@@ -421,9 +475,7 @@ export default function HomePage() {
           seoPayload,
         }),
       });
-      if (!response.ok) {
-        throw new Error(await getApiError(response));
-      }
+      if (!response.ok) throw new Error(await getApiError(response));
       const data = (await response.json()) as PublishResultState;
       setPublishResult(data);
       syncBalance(data.tokenCharge?.remaining);
@@ -431,7 +483,10 @@ export default function HomePage() {
         setNewCategoryName("");
         void loadCategories(selectedSiteId, false);
       }
-      setToast({ type: data.seoUpdate?.ok ? "success" : "info", message: `Post #${data.postId} saved.` });
+      setToast({
+        type: data.seoUpdate?.ok ? "success" : "info",
+        message: `Post #${data.postId} saved.`,
+      });
     } catch (error) {
       setToast({
         type: "error",
@@ -444,16 +499,11 @@ export default function HomePage() {
 
   const handlePublishGoogleDoc = async () => {
     try {
-      if (!selectedSiteId) {
-        throw new Error("Select a WordPress site before importing a Google Doc.");
-      }
-      if (!googleDocInput.trim()) {
-        throw new Error("Google Doc URL or ID is required.");
-      }
+      if (!selectedSiteId) throw new Error("Select a WordPress site before importing a Google Doc.");
+      if (!googleDocInput.trim()) throw new Error("Google Doc URL or ID is required.");
       if (googleDocPublishMode === "future" && !googleDocScheduledAtLocal.trim()) {
         throw new Error("Select a future schedule date/time first.");
       }
-
       setIsPublishingGoogleDoc(true);
       const response = await fetch("/api/google-doc-publish", {
         method: "POST",
@@ -471,9 +521,7 @@ export default function HomePage() {
           seoProvider,
         }),
       });
-      if (!response.ok) {
-        throw new Error(await getApiError(response));
-      }
+      if (!response.ok) throw new Error(await getApiError(response));
       const data = (await response.json()) as GoogleDocPublishResultState;
       setGoogleDocPublishResult(data);
       syncBalance(data.tokenCharge?.remaining);
@@ -495,13 +543,10 @@ export default function HomePage() {
 
   const handleAutoPublishNews = async () => {
     try {
-      if (!selectedSiteId) {
-        throw new Error("Select a WordPress site before running news autopilot.");
-      }
+      if (!selectedSiteId) throw new Error("Select a WordPress site before running news autopilot.");
       if (newsPublishMode === "future" && !newsScheduledAtLocal.trim()) {
         throw new Error("Select a future schedule date/time first.");
       }
-
       setIsAutoPublishingNews(true);
       const response = await fetch("/api/news-autopublish", {
         method: "POST",
@@ -523,9 +568,7 @@ export default function HomePage() {
           seoProvider,
         }),
       });
-      if (!response.ok) {
-        throw new Error(await getApiError(response));
-      }
+      if (!response.ok) throw new Error(await getApiError(response));
       const data = (await response.json()) as NewsAutoPublishResultState;
       setNewsAutoPublishResult(data);
       syncBalance(data.tokenCharge?.remaining);
@@ -546,105 +589,78 @@ export default function HomePage() {
     }
   };
 
-  if (status === "loading" || !account) {
-    return <main className="mx-auto max-w-4xl px-4 py-10 text-sm text-slate-600">Loading workspace...</main>;
+  if (status === "loading") return <DashboardLoading title="Loading workspace..." />;
+  if (!account && accountLoadError) {
+    return (
+      <DashboardLoadError
+        title="Unable to open your workspace"
+        message={accountLoadError}
+        onRetry={() => void loadAccount().catch((error: unknown) => {
+          const message =
+            error instanceof Error ? error.message : "Failed to load account details.";
+          setAccountLoadError(message);
+        })}
+        onSignOut={() => void signOut({ callbackUrl: "/login" })}
+      />
+    );
   }
-
-  if (status === "unauthenticated") {
-    return null;
-  }
+  if (!account) return <DashboardLoading title="Loading workspace..." />;
+  if (status === "unauthenticated") return null;
 
   return (
     <DashboardShell
       title="Publishing Workspace"
-      subtitle="Choose a site, then run the workflow that fits the job."
+      subtitle="Choose a site, select a workflow, and push high-quality content through a tighter production dashboard."
       role={account.role}
       userLabel={account.name || session?.user?.email || "User"}
       userEmail={session?.user?.email || null}
       tokenBalance={account.tokenBalance}
       navItems={
         [
-          { href: "/", label: "Workspace", hint: "Drafts, imports, and autopilot" },
-          { href: "/billing", label: "Billing", hint: "Packages and token usage" },
-          { href: "/account", label: "Sites", hint: "Manage connected WordPress sites" },
-          { href: "/admin", label: "Admin", hint: "Users and packages", visible: account.role === "ADMIN" },
+          { href: "/", label: "Workspace", hint: "Drafts, imports, and autopilot", group: "Workspace", icon: "workspace" },
+          { href: "/billing", label: "Billing", hint: "Packages and token usage", group: "Revenue", icon: "billing" },
+          { href: "/account", label: "Sites", hint: "Manage connected WordPress sites", group: "Settings", icon: "sites" },
+          { href: "/admin", label: "Admin", hint: "Users and packages", visible: account.role === "ADMIN", group: "Operations", icon: "admin" },
         ] satisfies DashboardNavItem[]
       }
     >
       {!hasSiteConfigured ? (
-        <div className="rounded-[1.5rem] border border-amber-300 bg-gradient-to-r from-amber-50 to-white px-5 py-4 text-sm text-amber-950 shadow-sm">
-          No WordPress site is connected yet. Add one in{" "}
-          <Link href="/account" className="font-semibold underline">
-            Site Settings
-          </Link>{" "}
-          before you publish.
+        <div className="panel px-4 py-4 md:px-5">
+          <EmptyState
+            title="No WordPress site connected"
+            description="Connect a client site first so the workspace can load categories and unlock publishing."
+            action={<Link href="/account" className="button-primary">Open site settings</Link>}
+          />
         </div>
       ) : null}
 
-      <div className="grid gap-5 xl:grid-cols-[minmax(0,1.1fr)_minmax(340px,0.9fr)]">
-        <section className="space-y-5">
-          <div className="grid gap-4 lg:grid-cols-[minmax(0,1.2fr)_minmax(0,0.8fr)]">
-            <div className="rounded-[1.75rem] border border-slate-200 bg-[linear-gradient(135deg,#0f172a_0%,#1d4ed8_55%,#93c5fd_100%)] p-6 text-white shadow-xl">
-              <p className="text-xs font-semibold uppercase tracking-[0.28em] text-blue-100">Active Workspace</p>
-              <h2 className="mt-3 text-2xl font-semibold">
-                {selectedSite ? selectedSite.name : "Connect a WordPress site"}
-              </h2>
-              <p className="mt-2 text-sm text-blue-50">
-                {selectedSite
-                  ? `${selectedSite.baseUrl} connected as ${selectedSite.username}.`
-                  : "Registration no longer forces a site. Connect one or more sites when you are ready to publish."}
-              </p>
-              <div className="mt-5 flex flex-wrap gap-2">
-                <span className="rounded-full border border-white/20 bg-white/10 px-3 py-1 text-xs font-semibold">
-                  {account.tokenBalance.toLocaleString()} tokens
-                </span>
-                <span className="rounded-full border border-white/20 bg-white/10 px-3 py-1 text-xs font-semibold">
-                  {account.wordpressSites.length} site{account.wordpressSites.length === 1 ? "" : "s"}
-                </span>
-              </div>
-            </div>
-
-            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-1">
-              <div className="panel rounded-[1.5rem] p-5">
-                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Slug Preview</p>
-                <p className="mt-3 text-3xl font-semibold text-slate-950">
-                  {title.trim() ? currentSlug || "article" : "--"}
-                </p>
-                <p className="mt-2 text-sm text-slate-600">
-                  {keywordsCount} keyword{keywordsCount === 1 ? "" : "s"} parsed
-                </p>
-              </div>
-              <div className="panel rounded-[1.5rem] p-5">
-                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Categories</p>
-                <p className="mt-3 text-3xl font-semibold text-slate-950">{selectedCategoryIds.length}</p>
-                <p className="mt-2 text-sm text-slate-600">
-                  {isLoadingCategories
-                    ? "Loading selected site categories..."
-                    : selectedSite
-                      ? `${categories.length} available on this site`
-                      : "Select a site to load categories"}
-                </p>
-              </div>
-            </div>
+      <section className="grid gap-4 xl:grid-cols-[minmax(0,1.2fr)_360px]">
+        <div className="space-y-4">
+          <div className="grid gap-4 md:grid-cols-3">
+            {stats.map((item) => (
+              <MetricCard key={item.label} label={item.label} value={item.value} hint={item.hint} badge={item.badge} />
+            ))}
           </div>
 
-          <div className="panel rounded-[1.75rem] p-5">
-            <div className="flex flex-wrap items-start justify-between gap-3">
+          <section className="panel px-4 py-4 md:px-5">
+            <div className="section-header">
               <div>
-                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Target Site</p>
-                <h3 className="mt-2 text-xl font-semibold text-slate-950">Choose where this workflow publishes</h3>
+                <p className="eyebrow">Target Site</p>
+                <h2 className="mt-1 text-sm font-semibold text-slate-950">Publishing destination</h2>
+                <p className="mt-1 text-xs leading-5 text-slate-500">Keep one active target selected so categories and publish actions stay in sync.</p>
               </div>
-              <Link className="button-muted" href="/account">Manage Sites</Link>
+              <Link className="button-muted" href="/account">Manage sites</Link>
             </div>
+
             {hasSiteConfigured ? (
-              <div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+              <div className="mt-4 grid gap-3 md:grid-cols-2">
                 {account.wordpressSites.map((site) => (
                   <button
                     key={site.id}
                     type="button"
-                    className={`rounded-[1.35rem] border p-4 text-left transition ${
+                    className={`rounded-2xl border px-4 py-4 text-left transition ${
                       site.id === selectedSiteId
-                        ? "border-blue-500 bg-blue-50 shadow-sm ring-2 ring-blue-100"
+                        ? "border-blue-200 bg-blue-50"
                         : "border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50"
                     }`}
                     onClick={() => setSelectedSiteId(site.id)}
@@ -652,78 +668,127 @@ export default function HomePage() {
                     <div className="flex items-start justify-between gap-3">
                       <div>
                         <p className="text-sm font-semibold text-slate-950">{site.name}</p>
-                        <p className="mt-1 break-all text-xs text-slate-600">{site.baseUrl}</p>
+                        <p className="mt-1 break-all text-xs text-slate-500">{site.baseUrl}</p>
                       </div>
-                      {site.isDefault ? (
-                        <span className="rounded-full bg-slate-900 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide text-white">
-                          Default
-                        </span>
-                      ) : null}
+                      {site.isDefault ? <span className="badge-info">Default</span> : null}
                     </div>
-                    <p className="mt-3 text-xs text-slate-500">Username: {site.username}</p>
+                    <div className="mt-3 flex items-center justify-between gap-2">
+                      <span className="text-xs text-slate-500">User: {site.username}</span>
+                      {site.id === selectedSiteId ? <span className="badge-success">Active</span> : null}
+                    </div>
                   </button>
                 ))}
               </div>
             ) : (
-              <div className="mt-5 rounded-[1.25rem] border border-dashed border-slate-300 bg-slate-50 px-4 py-5 text-sm text-slate-600">
-                Add your first site in <Link href="/account" className="font-semibold underline">Site Settings</Link>.
+              <div className="mt-4">
+                <EmptyState
+                  title="No sites available"
+                  description="Add your first WordPress connection in Site Settings."
+                  action={<Link href="/account" className="button-muted">Go to sites</Link>}
+                />
               </div>
             )}
-          </div>
+          </section>
 
-          <div className="panel rounded-[1.75rem] p-5">
-            <div className="grid gap-5 lg:grid-cols-[minmax(0,1.35fr)_minmax(0,0.65fr)]">
+          <section className="panel px-4 py-4 md:px-5">
+            <div className="section-header">
               <div>
-                <label className="label">Site categories</label>
-                <div className="rounded-[1.25rem] border border-slate-200 bg-slate-50 p-3">
+                <p className="eyebrow">Workflow</p>
+                <h2 className="mt-1 text-sm font-semibold text-slate-950">Choose how content gets published</h2>
+              </div>
+            </div>
+            <div className="mt-4 grid gap-3 lg:grid-cols-3">
+              {workspaceTabs.map(([id, label, description]) => (
+                <button
+                  key={id}
+                  type="button"
+                  className={`rounded-2xl border px-4 py-4 text-left transition ${
+                    workspaceMode === id
+                      ? "border-blue-200 bg-blue-50"
+                      : "border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50"
+                  }`}
+                  onClick={() => setWorkspaceMode(id)}
+                >
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="text-sm font-medium text-slate-950">{label}</p>
+                    {workspaceMode === id ? <span className="badge-info">Active</span> : null}
+                  </div>
+                  <p className="mt-2 text-xs leading-5 text-slate-500">{description}</p>
+                </button>
+              ))}
+            </div>
+          </section>
+
+          <section className="panel px-4 py-4 md:px-5">
+            <div className="section-header">
+              <div>
+                <p className="eyebrow">Publishing Rules</p>
+                <h2 className="mt-1 text-sm font-semibold text-slate-950">Categories and SEO provider</h2>
+              </div>
+            </div>
+
+            <div className="mt-4 grid gap-4 lg:grid-cols-[minmax(0,1.3fr)_minmax(0,0.7fr)]">
+              <div className="panel-muted px-4 py-4">
+                <div className="flex items-center justify-between gap-3">
+                  <p className="text-xs font-semibold text-slate-900">Site categories</p>
+                  {isLoadingCategories ? <span className="badge-neutral">Loading</span> : null}
+                </div>
+                <div className="mt-3">
                   {!selectedSite ? (
-                    <p className="text-sm text-slate-500">Select a site to load categories.</p>
+                    <EmptyState title="No site selected" description="Choose a site to load categories." />
                   ) : categories.length === 0 ? (
-                    <p className="text-sm text-slate-500">
-                      {isLoadingCategories ? "Loading categories..." : "No categories found on this site yet."}
-                    </p>
+                    <EmptyState
+                      title={isLoadingCategories ? "Loading categories" : "No categories found"}
+                      description={isLoadingCategories ? "Pulling taxonomy from WordPress." : "This site does not currently expose any categories."}
+                    />
                   ) : (
                     <div className="flex flex-wrap gap-2">
-                      {categories.map((category) => (
-                        <button
-                          key={category.id}
-                          type="button"
-                          className={`rounded-full border px-3 py-1.5 text-sm transition ${
-                            selectedCategoryIds.includes(category.id)
-                              ? "border-blue-500 bg-blue-50 text-blue-950"
-                              : "border-slate-300 bg-white text-slate-700 hover:border-slate-400"
-                          }`}
-                          onClick={() =>
-                            setSelectedCategoryIds((current) =>
-                              current.includes(category.id)
-                                ? current.filter((id) => id !== category.id)
-                                : [...current, category.id],
-                            )
-                          }
-                        >
-                          {category.name}
-                        </button>
-                      ))}
+                      {categories.map((category) => {
+                        const selected = selectedCategoryIds.includes(category.id);
+                        return (
+                          <button
+                            key={category.id}
+                            type="button"
+                            className={`rounded-full border px-3 py-1.5 text-xs font-medium transition ${
+                              selected
+                                ? "border-blue-200 bg-blue-50 text-blue-800"
+                                : "border-slate-200 bg-white text-slate-600 hover:border-slate-300"
+                            }`}
+                            onClick={() =>
+                              setSelectedCategoryIds((current) =>
+                                current.includes(category.id)
+                                  ? current.filter((id) => id !== category.id)
+                                  : [...current, category.id],
+                              )
+                            }
+                          >
+                            {category.name}
+                          </button>
+                        );
+                      })}
                     </div>
                   )}
                 </div>
               </div>
+
               <div className="space-y-4">
-                <div>
+                <div className="panel-muted px-4 py-4">
                   <label className="label">Create category on publish</label>
-                  <input className="input" value={newCategoryName} onChange={(event) => setNewCategoryName(event.target.value)} placeholder="Optional new category name" />
+                  <input className="input" value={newCategoryName} onChange={(event) => setNewCategoryName(event.target.value)} placeholder="Optional new category" />
+                  <p className="helper">Only used if the category does not already exist.</p>
                 </div>
-                <div>
+
+                <div className="panel-muted px-4 py-4">
                   <label className="label">SEO provider</label>
                   <div className="grid gap-2">
                     {(["None", "AIOSEO", "Yoast"] as SEOProvider[]).map((provider) => (
                       <button
                         key={provider}
                         type="button"
-                        className={`rounded-[1rem] border px-3 py-2 text-left text-sm transition ${
+                        className={`rounded-2xl border px-3 py-2 text-left text-sm transition ${
                           seoProvider === provider
                             ? "border-slate-900 bg-slate-900 text-white"
-                            : "border-slate-300 bg-white text-slate-700 hover:border-slate-400"
+                            : "border-slate-200 bg-white text-slate-700 hover:border-slate-300"
                         }`}
                         onClick={() => setSeoProvider(provider)}
                       >
@@ -734,47 +799,39 @@ export default function HomePage() {
                 </div>
               </div>
             </div>
-          </div>
-
-          <div className="panel rounded-[1.75rem] p-5">
-            <div className="grid gap-3 lg:grid-cols-3">
-              {workspaceTabs.map(([id, label, subtitle]) => (
-                <button
-                  key={id}
-                  type="button"
-                  className={`rounded-[1.35rem] border px-4 py-4 text-left transition ${
-                    workspaceMode === id
-                      ? "border-blue-500 bg-blue-50 shadow-sm"
-                      : "border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50"
-                  }`}
-                  onClick={() => setWorkspaceMode(id)}
-                >
-                  <p className="text-sm font-semibold text-slate-950">{label}</p>
-                  <p className="mt-1 text-xs text-slate-600">{subtitle}</p>
-                </button>
-              ))}
-            </div>
-          </div>
-
+          </section>
           {workspaceMode === "manual" ? (
             <>
-              <div className="panel rounded-[1.75rem] p-5">
-                <div className="grid gap-4 md:grid-cols-2">
+              <section className="panel px-4 py-4 md:px-5">
+                <div className="section-header">
+                  <div>
+                    <p className="eyebrow">Manual Studio</p>
+                    <h2 className="mt-1 text-sm font-semibold text-slate-950">Build a draft from a brief</h2>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="badge-neutral">{tone}</span>
+                    <span className="badge-neutral">{wordCount} words</span>
+                  </div>
+                </div>
+
+                <div className="mt-4 grid gap-4 md:grid-cols-2">
                   <div className="md:col-span-2">
                     <label className="label">Article title</label>
-                    <input className="input" value={title} onChange={(event) => setTitle(event.target.value)} placeholder="Example: Best AI Writing Tools for Agencies" />
+                    <input className="input" value={title} onChange={(event) => setTitle(event.target.value)} placeholder="Best AI Writing Tools for Agencies" />
                   </div>
                   <div className="md:col-span-2">
                     <label className="label">Topic brief</label>
-                    <textarea className="textarea min-h-36" value={brief} onChange={(event) => setBrief(event.target.value)} placeholder="Describe angle, audience, structure, and what must be covered." />
+                    <textarea className="textarea min-h-[160px]" value={brief} onChange={(event) => setBrief(event.target.value)} placeholder="Describe the angle, target reader, objections, structure, and proof points." />
                   </div>
                   <div>
                     <label className="label">Keywords</label>
                     <input className="input" value={keywords} onChange={(event) => setKeywords(event.target.value)} placeholder="seo automation, ai publishing, wordpress" />
+                    <p className="helper">Comma-separated support terms for clustering and tags.</p>
                   </div>
                   <div>
                     <label className="label">Focus keyword</label>
                     <input className="input" value={seoPayload.focusKeyword} onChange={(event) => setSeoPayload((current) => ({ ...current, focusKeyword: event.target.value }))} placeholder="Primary ranking term" />
+                    <p className="helper">Required before generating a draft.</p>
                   </div>
                   <div>
                     <label className="label">Tone</label>
@@ -797,7 +854,7 @@ export default function HomePage() {
                     </select>
                   </div>
                   <div>
-                    <label className="label">Schedule date/time</label>
+                    <label className="label">Schedule date / time</label>
                     <input type="datetime-local" className="input" value={scheduledAtLocal} onChange={(event) => setScheduledAtLocal(event.target.value)} disabled={publishMode !== "future"} />
                   </div>
                   <div>
@@ -809,22 +866,42 @@ export default function HomePage() {
                     <input className="input" value={seoPayload.canonicalUrl || ""} onChange={(event) => setSeoPayload((current) => ({ ...current, canonicalUrl: event.target.value }))} placeholder="Optional canonical URL" />
                   </div>
                 </div>
-                <div className="mt-5 flex flex-wrap gap-3">
-                  <button type="button" className="button-primary" onClick={handleGenerateDraft} disabled={isBusy}>{isGeneratingDraft ? "Generating..." : "Generate Draft"}</button>
-                  <button type="button" className="button-secondary" onClick={handleGenerateImage} disabled={isBusy}>{isGeneratingImage ? "Generating..." : "Generate Image"}</button>
-                  <button type="button" className="button-muted" onClick={handlePublishPost} disabled={isBusy || !selectedSiteId}>{isPublishing ? "Publishing..." : "Publish to WordPress"}</button>
+
+                <div className="mt-4 flex flex-wrap gap-2">
+                  <button type="button" className="button-primary" onClick={handleGenerateDraft} disabled={isBusy}>{isGeneratingDraft ? "Generating..." : "Generate draft"}</button>
+                  <button type="button" className="button-muted" onClick={handleGenerateImage} disabled={isBusy}>{isGeneratingImage ? "Generating..." : "Generate image"}</button>
+                  <button type="button" className="button-secondary" onClick={handlePublishPost} disabled={isBusy || !selectedSiteId}>{isPublishing ? "Publishing..." : "Publish to WordPress"}</button>
                 </div>
-                {excerpt ? <div className="mt-5 rounded-[1.25rem] border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700">{excerpt}</div> : null}
-                {suggestedTags.length > 0 ? <div className="mt-4 flex flex-wrap gap-2">{suggestedTags.map((tag) => <span key={tag} className="rounded-full border border-slate-300 bg-white px-3 py-1 text-sm text-slate-700">{tag}</span>)}</div> : null}
-              </div>
+
+                {excerpt ? (
+                  <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">Draft Summary</p>
+                    <p className="mt-2 text-sm leading-6 text-slate-700">{excerpt}</p>
+                  </div>
+                ) : null}
+                {suggestedTags.length > 0 ? (
+                  <div className="mt-4 flex flex-wrap gap-2">
+                    {suggestedTags.map((tag) => (
+                      <span key={tag} className="badge-neutral">{tag}</span>
+                    ))}
+                  </div>
+                ) : null}
+              </section>
               <LinkTable links={links} onChange={setLinks} />
               <SeoFields value={seoPayload} onChange={setSeoPayload} />
             </>
           ) : null}
 
           {workspaceMode === "google-doc" ? (
-            <div className="panel rounded-[1.75rem] p-5">
-              <div className="grid gap-4 md:grid-cols-2">
+            <section className="panel px-4 py-4 md:px-5">
+              <div className="section-header">
+                <div>
+                  <p className="eyebrow">Google Doc Import</p>
+                  <h2 className="mt-1 text-sm font-semibold text-slate-950">Publish from a document link</h2>
+                </div>
+              </div>
+
+              <div className="mt-4 grid gap-4 md:grid-cols-2">
                 <div className="md:col-span-2">
                   <label className="label">Google Doc link</label>
                   <input className="input" value={googleDocInput} onChange={(event) => setGoogleDocInput(event.target.value)} placeholder="https://docs.google.com/document/d/... or a document ID" />
@@ -838,31 +915,42 @@ export default function HomePage() {
                   </select>
                 </div>
                 <div>
-                  <label className="label">Schedule date/time</label>
+                  <label className="label">Schedule date / time</label>
                   <input type="datetime-local" className="input" value={googleDocScheduledAtLocal} onChange={(event) => setGoogleDocScheduledAtLocal(event.target.value)} disabled={googleDocPublishMode !== "future"} />
                 </div>
               </div>
-              <div className="mt-5 rounded-[1.25rem] border border-blue-200 bg-blue-50 p-4 text-sm text-blue-950">
-                Use a normal Google Doc link only. If the doc is private, change sharing to <strong>Anyone with the link can view</strong> or use <strong>File &gt; Share &gt; Publish to web</strong>. No Google service email or private key is needed.
+
+              <div className="mt-4 rounded-2xl border border-blue-200 bg-blue-50 px-4 py-4 text-xs leading-6 text-blue-900">
+                Use a normal Google Doc link only. If the document is private, enable <span className="font-semibold">Anyone with the link can view</span> or use <span className="font-semibold">Publish to web</span>.
               </div>
-              <div className="mt-5">
-                <button type="button" className="button-secondary" onClick={handlePublishGoogleDoc} disabled={isBusy || !selectedSiteId}>{isPublishingGoogleDoc ? "Publishing..." : "Import and Publish"}</button>
+
+              <div className="mt-4">
+                <button type="button" className="button-secondary" onClick={handlePublishGoogleDoc} disabled={isBusy || !selectedSiteId}>{isPublishingGoogleDoc ? "Publishing..." : "Import and publish"}</button>
               </div>
-            </div>
+            </section>
           ) : null}
 
           {workspaceMode === "news" ? (
-            <div className="panel rounded-[1.75rem] p-5">
-              <div className="grid gap-4 md:grid-cols-2">
+            <section className="panel px-4 py-4 md:px-5">
+              <div className="section-header">
+                <div>
+                  <p className="eyebrow">News Autopilot</p>
+                  <h2 className="mt-1 text-sm font-semibold text-slate-950">Rewrite fresh news into articles</h2>
+                </div>
+              </div>
+
+              <div className="mt-4 grid gap-4 md:grid-cols-2">
                 <div>
                   <label className="label">News category</label>
                   <select className="select" value={newsCategory} onChange={(event) => setNewsCategory(event.target.value as (typeof newsCategoryOptions)[number])}>
-                    {newsCategoryOptions.map((option) => <option key={option} value={option}>{option}</option>)}
+                    {newsCategoryOptions.map((option) => (
+                      <option key={option} value={option}>{option}</option>
+                    ))}
                   </select>
                 </div>
                 <div>
                   <label className="label">Keyword filter</label>
-                  <input className="input" value={newsQuery} onChange={(event) => setNewsQuery(event.target.value)} placeholder="Optional keyword filter" />
+                  <input className="input" value={newsQuery} onChange={(event) => setNewsQuery(event.target.value)} placeholder="Optional filter" />
                 </div>
                 <div>
                   <label className="label">Language</label>
@@ -880,46 +968,84 @@ export default function HomePage() {
                   </select>
                 </div>
                 <div>
-                  <label className="label">Schedule date/time</label>
+                  <label className="label">Schedule date / time</label>
                   <input type="datetime-local" className="input" value={newsScheduledAtLocal} onChange={(event) => setNewsScheduledAtLocal(event.target.value)} disabled={newsPublishMode !== "future"} />
                 </div>
               </div>
-              <div className="mt-5">
-                <button type="button" className="button-primary" onClick={handleAutoPublishNews} disabled={isBusy || !selectedSiteId}>{isAutoPublishingNews ? "Processing..." : "Run News Autopilot"}</button>
+
+              <div className="mt-4">
+                <button type="button" className="button-primary" onClick={handleAutoPublishNews} disabled={isBusy || !selectedSiteId}>{isAutoPublishingNews ? "Processing..." : "Run news autopilot"}</button>
+              </div>
+            </section>
+          ) : null}
+        </div>
+
+        <div className="space-y-4">
+          <section className="panel px-4 py-4">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <p className="eyebrow">Current Target</p>
+                <p className="mt-1 text-sm font-semibold text-slate-950">{selectedSite?.name || "No site selected"}</p>
+              </div>
+              {selectedSite?.isDefault ? <span className="badge-info">Default</span> : null}
+            </div>
+            <p className="mt-2 break-all text-xs leading-5 text-slate-500">{selectedSite?.baseUrl || "Select a site to enable publish actions."}</p>
+            {selectedSite ? (
+              <div className="mt-3 grid gap-2 text-xs text-slate-500">
+                <p>User: {selectedSite.username}</p>
+                <p>Updated: {new Date(selectedSite.updatedAt).toLocaleString()}</p>
+              </div>
+            ) : null}
+          </section>
+
+          <section className="panel px-4 py-4">
+            <div className="section-header">
+              <div>
+                <p className="eyebrow">Workflow Activity</p>
+                <h2 className="mt-1 text-sm font-semibold text-slate-950">Run status</h2>
               </div>
             </div>
-          ) : null}
-        </section>
-
-        <section className="space-y-5">
-          <div className="panel rounded-[1.75rem] p-5">
-            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Current Target</p>
-            {selectedSite ? (
-              <>
-                <h3 className="mt-2 text-xl font-semibold text-slate-950">{selectedSite.name}</h3>
-                <p className="mt-2 break-all text-sm text-slate-600">{selectedSite.baseUrl}</p>
-                <p className="mt-3 text-sm text-slate-700">Username: {selectedSite.username}</p>
-                <p className="mt-1 text-xs text-slate-500">Updated {new Date(selectedSite.updatedAt).toLocaleString()}</p>
-              </>
-            ) : (
-              <p className="mt-3 text-sm text-slate-600">Select a site to enable publishing.</p>
-            )}
-          </div>
+            <div className="mt-3 grid gap-3">
+              <div className="flex items-center justify-between rounded-2xl border border-slate-200 bg-slate-50 px-3 py-3">
+                <span className="text-sm text-slate-700">Draft generation</span>
+                <span className={isGeneratingDraft ? "badge-info" : "badge-neutral"}>{isGeneratingDraft ? "Running" : generatedHtml ? "Ready" : "Idle"}</span>
+              </div>
+              <div className="flex items-center justify-between rounded-2xl border border-slate-200 bg-slate-50 px-3 py-3">
+                <span className="text-sm text-slate-700">Image generation</span>
+                <span className={isGeneratingImage ? "badge-info" : "badge-neutral"}>{isGeneratingImage ? "Running" : generatedImage ? "Ready" : "Idle"}</span>
+              </div>
+              <div className="flex items-center justify-between rounded-2xl border border-slate-200 bg-slate-50 px-3 py-3">
+                <span className="text-sm text-slate-700">Publishing</span>
+                <span className={isPublishing || isPublishingGoogleDoc || isAutoPublishingNews ? "badge-info" : "badge-neutral"}>{isPublishing || isPublishingGoogleDoc || isAutoPublishingNews ? "Running" : "Idle"}</span>
+              </div>
+            </div>
+          </section>
 
           {generatedImage ? (
-            <div className="panel rounded-[1.75rem] p-5">
-              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Featured Image</p>
-              <img src={`data:${generatedImage.mimeType};base64,${generatedImage.imageBase64}`} alt={generatedImage.altTextSuggestion} className="mt-4 max-h-72 w-full rounded-[1.35rem] border border-slate-200 object-cover" />
-            </div>
-          ) : null}
+            <section className="panel px-4 py-4">
+              <div className="flex items-center justify-between gap-3">
+                <p className="eyebrow">Featured Image</p>
+                <span className="badge-success">Generated</span>
+              </div>
+              <img src={`data:${generatedImage.mimeType};base64,${generatedImage.imageBase64}`} alt={generatedImage.altTextSuggestion} className="mt-3 max-h-72 w-full rounded-2xl border border-slate-200 object-cover" />
+              <div className="mt-3 space-y-1 text-xs text-slate-500">
+                <p>Suggested alt text: {generatedImage.altTextSuggestion}</p>
+                <p>Filename: {generatedImage.filenameSuggestion}</p>
+              </div>
+            </section>
+          ) : (
+            <section className="panel px-4 py-4">
+              <EmptyState title="No featured image yet" description="Generate an image after writing the brief so the visual direction lines up with the draft." />
+            </section>
+          )}
 
-          {publishResult ? <div className="panel rounded-[1.75rem] p-5 text-sm"><p className="font-semibold text-slate-950">Manual publish: #{publishResult.postId}</p><a className="mt-2 block break-all text-blue-700 underline" href={publishResult.link} target="_blank" rel="noreferrer">{publishResult.link}</a></div> : null}
-          {googleDocPublishResult ? <div className="panel rounded-[1.75rem] p-5 text-sm"><p className="font-semibold text-slate-950">Google Doc: {googleDocPublishResult.title}</p><a className="mt-2 block break-all text-blue-700 underline" href={googleDocPublishResult.link} target="_blank" rel="noreferrer">{googleDocPublishResult.link}</a></div> : null}
-          {newsAutoPublishResult ? <div className="panel rounded-[1.75rem] p-5 text-sm"><p className="font-semibold text-slate-950">{newsAutoPublishResult.published} published / {newsAutoPublishResult.failed} failed</p></div> : null}
+          {publishResult ? <ResultSummary label="Manual Publish" title={`Post #${publishResult.postId} saved to WordPress`} link={publishResult.link} status={publishResult.status} /> : null}
+          {googleDocPublishResult ? <ResultSummary label="Google Doc" title={googleDocPublishResult.title} link={googleDocPublishResult.link} /> : null}
+          {newsAutoPublishResult ? <ResultSummary label="News Autopilot" title={`${newsAutoPublishResult.published} published / ${newsAutoPublishResult.failed} failed`} /> : null}
 
           <ArticlePreview html={generatedHtml} links={links} seoProvider={seoProvider} seoPayload={seoPayload} hasGeneratedImage={Boolean(generatedImage)} />
-        </section>
-      </div>
+        </div>
+      </section>
 
       {toast ? <StatusToast type={toast.type} message={toast.message} onClose={() => setToast(null)} /> : null}
     </DashboardShell>

@@ -12,8 +12,22 @@ export default function RootLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>) {
   return (
-    <html lang="en">
+    <html lang="en" suppressHydrationWarning>
       <body>
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `
+try {
+  const stored = localStorage.getItem("ai-publisher-theme");
+  const theme = stored === "dark" || stored === "light"
+    ? stored
+    : (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+  document.documentElement.classList.toggle("dark", theme === "dark");
+  document.documentElement.dataset.theme = theme;
+} catch {}
+`,
+          }}
+        />
         <Providers>{children}</Providers>
       </body>
     </html>
