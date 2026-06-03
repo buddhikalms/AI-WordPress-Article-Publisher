@@ -5,7 +5,7 @@ import {
   type GenerateArticleRequest,
   type GenerateArticleResponsePayload,
 } from "@/lib/schemas";
-import type { InlineGeneratedImage } from "@/lib/types";
+import type { InlineGeneratedImage, SeoPayload } from "@/lib/types";
 import type { NewsSourceArticle } from "@/lib/newsdata";
 
 const defaultTextModel = process.env.OPENAI_TEXT_MODEL || "gpt-4.1-mini";
@@ -353,6 +353,102 @@ export const generateInlineArticleImages = async (input: {
   }
 
   return images;
+};
+
+export const generateSeoPayloadForArticle = async (input: {
+  title: string;
+  html: string;
+  excerpt?: string;
+  focusKeyword?: string;
+  canonicalUrl?: string;
+}): Promise<SeoPayload> => {
+  const plainText = normalizeText(input.html.replace(/<[^>]+>/g, " ")).slice(0, 6000);
+  const fallbackExcerpt = input.excerpt || plainText.slice(0, 180) || input.title;
+  const fallbackKeyword =
+    normalizeText(input.focusKeyword || "") || deriveFocusKeyword(input.title);
+
+  const client = getClient();
+  const completion = await client.chat.completions.create({
+    model: defaultTextModel,
+    temperature: 0.25,
+    response_format: { type: "json_object" },
+    messages: [
+      {
+        role: "system",
+        content: [
+          "You are an AIOSEO on-page SEO specialist.",
+          "Generate concise, human SEO metadata for a pre-written WordPress article.",
+          "Respect character limits exactly and avoid keyword stuffing.",
+          "Return JSON only.",
+        ].join(" "),
+      },
+      {
+        role: "user",
+        content: [
+          "Return a JSON object with this exact shape:",
+          "{",
+          '  "seoTitle": "string",',
+          '  "metaDescription": "string",',
+          '  "focusKeyword": "string",',
+          '  "canonicalUrl": "optional absolute url",',
+          '  "og": { "title": "string", "description": "string", "imageUrl": "optional absolute url" },',
+          '  "twitter": { "title": "string", "description": "string", "imageUrl": "optional absolute url" }',
+          "}",
+          "",
+          "Limits:",
+          "- seoTitle: max 60 characters, ideally 50-60.",
+          "- metaDescription: max 155 characters, ideally 140-155.",
+          "- og.title and twitter.title: max 60 characters.",
+          "- og.description and twitter.description: max 155 characters.",
+          "- focusKeyword: short primary phrase, 2-6 words.",
+          "- Leave imageUrl empty unless the article explicitly provides a usable image URL.",
+          "",
+          `Title: ${input.title}`,
+          `Existing excerpt: ${fallbackExcerpt}`,
+          `Preferred focus keyword: ${fallbackKeyword}`,
+          `Canonical URL: ${input.canonicalUrl || ""}`,
+          "",
+          "Article text:",
+          plainText,
+        ].join("\n"),
+      },
+    ],
+  });
+
+  const content = completion.choices[0]?.message?.content;
+  if (!content) {
+    throw new HttpError(502, "OpenAI returned an empty SEO response.");
+  }
+
+  const parsed = parseJsonFromModel(content) as Partial<SeoPayload>;
+  const seoTitle = cleanHeadline(parsed.seoTitle, input.title, 60);
+  const metaDescription = cleanSummary(
+    parsed.metaDescription,
+    fallbackExcerpt,
+    155,
+  );
+
+  return {
+    seoTitle,
+    metaDescription,
+    focusKeyword:
+      normalizeText(parsed.focusKeyword || fallbackKeyword) || fallbackKeyword,
+    canonicalUrl: input.canonicalUrl,
+    og: {
+      title: cleanHeadline(parsed.og?.title, seoTitle, 60),
+      description: cleanSummary(parsed.og?.description, metaDescription, 155),
+      imageUrl: parsed.og?.imageUrl || "",
+    },
+    twitter: {
+      title: cleanHeadline(parsed.twitter?.title, seoTitle, 60),
+      description: cleanSummary(
+        parsed.twitter?.description,
+        metaDescription,
+        155,
+      ),
+      imageUrl: parsed.twitter?.imageUrl || "",
+    },
+  };
 };
 
 const deriveFocusKeyword = (title: string) =>

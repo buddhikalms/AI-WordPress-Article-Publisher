@@ -34,7 +34,9 @@
 
 1. Paste a public Google Doc URL or document ID.
 2. Choose draft, publish, or schedule.
-3. Run the import and review the output.
+3. Add `featured_image_url` in front matter, or place the featured image as the first image in the Google Doc.
+4. Select AIOSEO or Yoast to let AI generate character-limited SEO metadata during import.
+5. Run the import and review the output.
 
 ### News Autopilot
 
@@ -52,10 +54,13 @@ Supported metadata keys include:
 - `excerpt`
 - `brief`
 - `categories`
+- `tags`
 - `seo_title`
 - `meta_description`
 - `focus_keyword`
 - `featured_image_url`
+
+Leave `seo_title` and `meta_description` blank or omit them when you want AI Article Publisher to generate AIOSEO/Yoast fields automatically. Generated SEO titles are capped at 60 characters, and generated descriptions are capped at 155 characters.
 
 Example:
 
@@ -66,13 +71,14 @@ slug: best-ai-seo-tools-for-agencies
 excerpt: A practical comparison of AI SEO tools for agency teams.
 brief: Use a professional angle focused on agencies scaling content.
 categories: SEO, AI Tools
-seo_title: Best AI SEO Tools for Agencies in 2026
-meta_description: Compare the top AI SEO tools agencies can use to scale content and research.
+tags: ai seo, agency workflows, content automation
 focus_keyword: ai seo tools for agencies
-featured_image_url: https://example.com/image.jpg
+featured_image_url:
 ---
 
 # Best AI SEO Tools for Agencies
+
+Place your featured image directly below the title if featured_image_url is blank.
 
 Your article body here.
 ```

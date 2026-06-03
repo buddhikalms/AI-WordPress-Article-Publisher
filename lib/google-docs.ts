@@ -12,6 +12,7 @@ export interface GoogleDocPostDraft {
   excerpt: string;
   brief: string;
   categories: string[];
+  tags: string[];
   imageUrls: string[];
   seoTitle?: string;
   metaDescription?: string;
@@ -67,6 +68,8 @@ const allowedMetadataKeys = new Set([
   "image_url",
   "categories",
   "category",
+  "tags",
+  "tag",
 ]);
 
 const escapeHtml = (value: string) =>
@@ -345,6 +348,10 @@ const parseGoogleDocMarkdown = (markdown: string, fallbackTitle: string) => {
     .split(",")
     .map((item) => item.trim())
     .filter(Boolean);
+  const tags = pickMetadata(metadata, ["tags", "tag"])
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
 
   return {
     title,
@@ -353,6 +360,7 @@ const parseGoogleDocMarkdown = (markdown: string, fallbackTitle: string) => {
     excerpt,
     brief,
     categories,
+    tags,
     seoTitle: pickMetadata(metadata, ["seo_title", "meta_title"]) || undefined,
     metaDescription:
       pickMetadata(metadata, ["meta_description", "seo_description"]) || undefined,

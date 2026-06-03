@@ -31,6 +31,13 @@ export interface WpCategory {
   count?: number;
 }
 
+export interface WpTag {
+  id: number;
+  name: string;
+  slug: string;
+  count?: number;
+}
+
 const getWpConfig = (override?: WpConfig): WpConfig => {
   if (override) {
     if (!override.baseUrl.trim() || !override.username.trim() || !override.appPassword.trim()) {
@@ -272,6 +279,7 @@ export const createPost = async (payload: {
   date?: string;
   featuredMediaId?: number;
   categories?: number[];
+  tags?: number[];
 }, config?: WpConfig) => {
   const body: Record<string, unknown> = {
     title: payload.title,
@@ -290,6 +298,9 @@ export const createPost = async (payload: {
   }
   if (payload.categories && payload.categories.length > 0) {
     body.categories = payload.categories;
+  }
+  if (payload.tags && payload.tags.length > 0) {
+    body.tags = payload.tags;
   }
 
   return wpRequest<WpPostResponse>("/wp-json/wp/v2/posts", {
@@ -354,4 +365,36 @@ export const ensureCategory = async (name: string, config?: WpConfig) => {
     return existing;
   }
   return createCategory(normalized, config);
+};
+
+export const listTags = async (config?: WpConfig) => {
+  const query =
+    "/wp-json/wp/v2/tags?per_page=100&orderby=name&order=asc&context=edit&_fields=id,name,slug,count";
+  return wpRequest<WpTag[]>(query, { method: "GET" }, config);
+};
+
+export const getTagByName = async (name: string, config?: WpConfig) => {
+  const query = `/wp-json/wp/v2/tags?search=${encodeURIComponent(name)}&per_page=100&context=edit&_fields=id,name,slug,count`;
+  const results = await wpRequest<WpTag[]>(query, { method: "GET" }, config);
+  const needle = name.trim().toLowerCase();
+  return results.find((tag) => tag.name.trim().toLowerCase() === needle) || null;
+};
+
+export const createTag = async (name: string, config?: WpConfig) => {
+  return wpRequest<WpTag>("/wp-json/wp/v2/tags", {
+    method: "POST",
+    body: JSON.stringify({ name: name.trim() }),
+  }, config);
+};
+
+export const ensureTag = async (name: string, config?: WpConfig) => {
+  const normalized = name.trim();
+  if (!normalized) {
+    throw new HttpError(400, "Tag name cannot be empty.");
+  }
+  const existing = await getTagByName(normalized, config);
+  if (existing) {
+    return existing;
+  }
+  return createTag(normalized, config);
 };

@@ -63,6 +63,9 @@ export interface PublishRequest {
   inPostImageCount?: number;
   selectedCategoryIds?: number[];
   newCategoryName?: string;
+  selectedTagIds?: number[];
+  newTagNames?: string[] | string;
+  suggestedTags?: string[];
   seoProvider: SEOProvider;
   seoPayload: SeoPayload;
 }
@@ -79,6 +82,8 @@ export interface NewsAutoPublishRequest {
   scheduledAt?: string;
   selectedCategoryIds?: number[];
   newCategoryName?: string;
+  selectedTagIds?: number[];
+  newTagNames?: string[] | string;
   inPostImageCount?: number;
   seoProvider: SEOProvider;
 }

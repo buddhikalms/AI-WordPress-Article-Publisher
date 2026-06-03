@@ -11,7 +11,7 @@ Next.js + Prisma + MySQL platform for AI-assisted WordPress publishing with:
 - Admin panel for users, packages, and token adjustments
 - Device lock (one account per device, one device per account)
 - Manual post status control (draft, publish now, schedule)
-- Import posts from a Google Doc link only, generating missing featured images and SEO fields when needed
+- Import posts from a Google Doc link only, uploading a provided/embedded featured image and generating character-limited AI SEO fields when needed
 - Category news auto-publish pipeline from NewsData API with OpenAI rewrite + fresh image generation
 
 ## Tech stack
@@ -116,3 +116,4 @@ See `prisma/schema.prisma` for:
 - WordPress credentials are encrypted before storing in DB.
 - The project currently expects dependencies to be installable from npm registry.
 - Google Docs import reads from a shareable document link. If a doc is private, switch it to "Anyone with the link can view" or use "Publish to web".
+- For Google Doc imports, use `docs/SAMPLE-GOOGLE-DOC-FORMAT.md` as the source format. If `featured_image_url` is blank, the first embedded doc image is uploaded as the WordPress featured image.

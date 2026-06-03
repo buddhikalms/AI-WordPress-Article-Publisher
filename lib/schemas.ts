@@ -29,6 +29,14 @@ const keywordsSchema = z
     return [...new Set(items.map((item) => item.trim()).filter(Boolean))];
   });
 
+const tagsSchema = z
+  .union([z.array(z.string()), z.string()])
+  .default([])
+  .transform((value) => {
+    const items = Array.isArray(value) ? value : value.split(",");
+    return [...new Set(items.map((item) => item.trim()).filter(Boolean))].slice(0, 50);
+  });
+
 export const generateArticleRequestSchema = z.object({
   title: z.string().trim().min(3, "Title is required."),
   brief: z.string().trim().min(10, "Topic/brief is required."),
@@ -98,6 +106,9 @@ export const publishRequestSchema = z
     inPostImageCount: z.coerce.number().int().min(0).max(10).default(0),
     selectedCategoryIds: z.array(z.coerce.number().int().positive()).default([]),
     newCategoryName: optionalStringSchema,
+    selectedTagIds: z.array(z.coerce.number().int().positive()).default([]),
+    newTagNames: tagsSchema,
+    suggestedTags: tagsSchema,
     seoProvider: seoProviderSchema,
     seoPayload: seoPayloadSchema,
   })
@@ -156,6 +167,8 @@ export const googleDocImportRequestSchema = z
     scheduledAt: optionalDateTimeSchema,
     selectedCategoryIds: z.array(z.coerce.number().int().positive()).default([]),
     newCategoryName: optionalStringSchema,
+    selectedTagIds: z.array(z.coerce.number().int().positive()).default([]),
+    newTagNames: tagsSchema,
     seoProvider: seoProviderSchema.default("None"),
   })
   .superRefine((value, context) => {
@@ -234,6 +247,8 @@ export const newsAutoPublishRequestSchema = z
     scheduledAt: optionalDateTimeSchema,
     selectedCategoryIds: z.array(z.coerce.number().int().positive()).default([]),
     newCategoryName: optionalStringSchema,
+    selectedTagIds: z.array(z.coerce.number().int().positive()).default([]),
+    newTagNames: tagsSchema,
     inPostImageCount: z.coerce.number().int().min(0).max(10).default(0),
     seoProvider: seoProviderSchema.default("None"),
   })

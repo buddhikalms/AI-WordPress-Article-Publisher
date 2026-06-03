@@ -1035,6 +1035,109 @@ final class AI_Article_Publisher
 		);
 	}
 
+	private function build_google_doc_fallback_seo_payload($draft, $excerpt, $featured_image_url)
+	{
+		return $this->hydrate_seo_payload(
+			array(
+				'seoTitle' => isset($draft['seoTitle']) ? $draft['seoTitle'] : '',
+				'metaDescription' => isset($draft['metaDescription']) ? $draft['metaDescription'] : '',
+				'focusKeyword' => isset($draft['focusKeyword']) ? $draft['focusKeyword'] : '',
+				'canonicalUrl' => isset($draft['canonicalUrl']) ? $draft['canonicalUrl'] : '',
+				'og' => array(
+					'title' => isset($draft['seoTitle']) ? $draft['seoTitle'] : '',
+					'description' => isset($draft['metaDescription']) ? $draft['metaDescription'] : '',
+					'imageUrl' => '',
+				),
+				'twitter' => array(
+					'title' => isset($draft['seoTitle']) ? $draft['seoTitle'] : '',
+					'description' => isset($draft['metaDescription']) ? $draft['metaDescription'] : '',
+					'imageUrl' => '',
+				),
+			),
+			isset($draft['title']) ? $draft['title'] : '',
+			$excerpt,
+			$featured_image_url
+		);
+	}
+
+	private function generate_seo_payload_for_article($draft, $excerpt, $featured_image_url)
+	{
+		$title = isset($draft['title']) ? (string) $draft['title'] : 'Article';
+		$html = isset($draft['html']) ? (string) $draft['html'] : '';
+		$plain_text = substr($this->normalize_meta_text($this->strip_html_text($html)), 0, 6000);
+		$fallback_focus = !empty($draft['focusKeyword']) ? (string) $draft['focusKeyword'] : $this->derive_focus_keyword($title);
+		$fallback_seo = $this->build_google_doc_fallback_seo_payload($draft, $excerpt, $featured_image_url);
+
+		$content = $this->ai_text_completion(
+			array(
+				array(
+					'role' => 'system',
+					'content' => implode(
+						' ',
+						array(
+							'You are an AIOSEO on-page SEO specialist.',
+							'Generate concise, human SEO metadata for a pre-written WordPress article.',
+							'Respect character limits exactly and avoid keyword stuffing.',
+							'Return JSON only.',
+						)
+					),
+				),
+				array(
+					'role' => 'user',
+					'content' => implode(
+						"\n",
+						array(
+							'Return a JSON object with this exact shape:',
+							'{',
+							'  "seoTitle": "string",',
+							'  "metaDescription": "string",',
+							'  "focusKeyword": "string",',
+							'  "canonicalUrl": "optional absolute url",',
+							'  "additionalKeywords": ["string"],',
+							'  "og": { "title": "string", "description": "string", "imageUrl": "optional absolute url" },',
+							'  "twitter": { "title": "string", "description": "string", "imageUrl": "optional absolute url" }',
+							'}',
+							'',
+							'Limits:',
+							'- seoTitle: max 60 characters, ideally 50-60.',
+							'- metaDescription: max 155 characters, ideally 140-155.',
+							'- og.title and twitter.title: max 60 characters.',
+							'- og.description and twitter.description: max 155 characters.',
+							'- focusKeyword: short primary phrase, 2-6 words.',
+							'- additionalKeywords: up to 8 short related phrases.',
+							'- Leave imageUrl empty unless the article explicitly provides a usable image URL.',
+							'',
+							'Title: ' . $title,
+							'Existing excerpt: ' . $excerpt,
+							'Preferred focus keyword: ' . $fallback_focus,
+							'Canonical URL: ' . (!empty($draft['canonicalUrl']) ? $draft['canonicalUrl'] : ''),
+							'',
+							'Article text:',
+							$plain_text,
+						)
+					),
+				),
+			),
+			array('temperature' => 0.25, 'action' => 'seo_generation', 'max_tokens' => 1200)
+		);
+
+		try {
+			$parsed = $this->parse_ai_json($content['content']);
+			if (!is_array($parsed)) {
+				$parsed = array();
+			}
+		} catch (Throwable $error) {
+			$parsed = array();
+		}
+
+		return $this->hydrate_seo_payload(
+			array_merge($fallback_seo, $parsed),
+			$title,
+			$excerpt,
+			$featured_image_url
+		);
+	}
+
 	private function validate_article_payload($html, $meta, $links)
 	{
 		$warnings = array();
@@ -1570,6 +1673,7 @@ final class AI_Article_Publisher
 				$category_ids[] = $this->ensure_category($new_category_name);
 			}
 			$category_ids = array_values(array_unique($category_ids));
+			$tag_names = isset($draft['tags']) ? $this->sanitize_string_list($draft['tags']) : array();
 
 			$featured_image = !empty($draft['featuredImageUrl'])
 				? $this->fetch_remote_image_as_base64($draft['featuredImageUrl'])
@@ -1598,22 +1702,13 @@ final class AI_Article_Publisher
 					'date' => $scheduled_at,
 					'featured_media_id' => (int) $featured_media['id'],
 					'categories' => $category_ids,
+					'tags' => $tag_names,
 				)
 			);
 
-			$seo_payload = $this->hydrate_seo_payload(
-				array(
-					'seoTitle' => $draft['seoTitle'],
-					'metaDescription' => $draft['metaDescription'],
-					'focusKeyword' => $draft['focusKeyword'],
-					'canonicalUrl' => $draft['canonicalUrl'],
-					'og' => array('title' => $draft['seoTitle'], 'description' => $draft['metaDescription'], 'imageUrl' => ''),
-					'twitter' => array('title' => $draft['seoTitle'], 'description' => $draft['metaDescription'], 'imageUrl' => ''),
-				),
-				$draft['title'],
-				$excerpt,
-				(string) $featured_media['source_url']
-			);
+			$seo_payload = ('None' === $seo_provider)
+				? $this->build_google_doc_fallback_seo_payload($draft, $excerpt, (string) $featured_media['source_url'])
+				: $this->generate_seo_payload_for_article($draft, $excerpt, (string) $featured_media['source_url']);
 			$seo_update = $this->apply_seo_meta((int) $post['id'], $seo_provider, $seo_payload, (string) $featured_media['source_url']);
 			$this->add_log('Google Docs', 'import_google_doc', 'success', '', (int) $post['id']);
 
@@ -1629,10 +1724,12 @@ final class AI_Article_Publisher
 					'featuredImage' => array(
 						'id' => (int) $featured_media['id'],
 						'sourceUrl' => (string) $featured_media['source_url'],
-						'source' => !empty($draft['featuredImageUrl']) ? 'provided' : 'generated',
+						'source' => !empty($draft['featuredImageSource']) ? $draft['featuredImageSource'] : (!empty($draft['featuredImageUrl']) ? 'provided' : 'generated'),
 					),
 					'categories' => $category_ids,
+					'tags' => $tag_names,
 					'seoUpdate' => $seo_update,
+					'seoSource' => ('None' === $seo_provider) ? 'skipped' : 'ai',
 				)
 			);
 		} catch (Throwable $error) {
@@ -1895,6 +1992,15 @@ final class AI_Article_Publisher
 		}
 
 		$parsed = $this->parse_google_doc_markdown($body, 'Untitled');
+		$image_urls = $this->fetch_google_doc_image_urls($document_id);
+		$featured_image_source = empty($parsed['featuredImageUrl']) ? 'generated' : 'provided';
+		if (empty($parsed['featuredImageUrl']) && !empty($image_urls[0])) {
+			$parsed['featuredImageUrl'] = $image_urls[0];
+			$featured_image_source = 'google-doc';
+		}
+		$parsed['imageUrls'] = $image_urls;
+		$parsed['featuredImageSource'] = $featured_image_source;
+		$parsed['html'] = $this->append_google_doc_images_if_missing($parsed['html'], $image_urls, $parsed['title']);
 		if (!$parsed['title']) {
 			throw new AI_Article_Publisher_Error('Google Doc is missing a usable title.', 400);
 		}
@@ -1912,6 +2018,95 @@ final class AI_Article_Publisher
 	{
 		return false !== stripos((string) $final_url, 'accounts.google.com')
 			|| preg_match('/ServiceLogin|Sign in - Google Accounts|To continue, sign in/i', (string) $body);
+	}
+
+	private function fetch_google_doc_image_urls($document_id)
+	{
+		$candidates = array(
+			sprintf('https://docs.google.com/document/d/%s/mobilebasic', rawurlencode($document_id)),
+			sprintf('https://docs.google.com/document/d/%s/export?format=html', rawurlencode($document_id)),
+		);
+
+		foreach ($candidates as $url) {
+			$response = wp_remote_get($url, array('timeout' => 60, 'redirection' => 5));
+			if (is_wp_error($response)) {
+				continue;
+			}
+			$status_code = (int) wp_remote_retrieve_response_code($response);
+			$body = (string) wp_remote_retrieve_body($response);
+			$final_url = (string) wp_remote_retrieve_header($response, 'x-final-url');
+			if ($status_code < 200 || $status_code >= 300 || $this->is_google_access_wall($body, $final_url)) {
+				continue;
+			}
+			if (!preg_match('/<img\b/i', $body)) {
+				continue;
+			}
+			$images = $this->extract_image_urls_from_html($body, $url);
+			if (!empty($images)) {
+				return $images;
+			}
+		}
+
+		return array();
+	}
+
+	private function extract_image_urls_from_html($html, $base_url)
+	{
+		$urls = array();
+		if (!preg_match_all('/<img\b[^>]*\bsrc\s*=\s*([\'"])(.*?)\1/i', (string) $html, $matches)) {
+			return array();
+		}
+
+		foreach ($matches[2] as $raw_src) {
+			$src = html_entity_decode(trim((string) $raw_src), ENT_QUOTES, 'UTF-8');
+			if (!$src || 0 === strpos($src, 'data:')) {
+				continue;
+			}
+			if (0 === strpos($src, '//')) {
+				$src = 'https:' . $src;
+			} elseif (!preg_match('/^https?:\/\//i', $src)) {
+				$src = $this->resolve_url($src, $base_url);
+			}
+			if ($src && preg_match('/^https?:\/\//i', $src)) {
+				$urls[] = esc_url_raw($src);
+			}
+		}
+
+		return array_values(array_unique(array_filter($urls)));
+	}
+
+	private function resolve_url($path, $base_url)
+	{
+		if (!$path) {
+			return '';
+		}
+		$base = wp_parse_url($base_url);
+		if (empty($base['scheme']) || empty($base['host'])) {
+			return '';
+		}
+		if ('/' === substr($path, 0, 1)) {
+			return $base['scheme'] . '://' . $base['host'] . $path;
+		}
+		$base_path = isset($base['path']) ? preg_replace('/\/[^\/]*$/', '/', $base['path']) : '/';
+		return $base['scheme'] . '://' . $base['host'] . $base_path . $path;
+	}
+
+	private function append_google_doc_images_if_missing($html, $image_urls, $title)
+	{
+		if (empty($image_urls) || preg_match('/<img\b/i', (string) $html)) {
+			return $html;
+		}
+
+		$figures = array();
+		foreach ($image_urls as $url) {
+			$figures[] = sprintf(
+				'<figure class="wp-block-image size-large"><img src="%s" alt="%s" loading="lazy" decoding="async" /></figure>',
+				esc_url($url),
+				esc_attr($title)
+			);
+		}
+
+		return trim((string) $html) . "\n" . implode("\n", $figures);
 	}
 
 	private function parse_google_doc_markdown($markdown, $fallback_title)
@@ -1958,6 +2153,7 @@ final class AI_Article_Publisher
 			'excerpt' => $excerpt,
 			'brief' => $brief,
 			'categories' => $this->sanitize_csv_strings($this->pick_metadata($metadata, array('categories', 'category'))),
+			'tags' => $this->sanitize_csv_strings($this->pick_metadata($metadata, array('tags', 'tag'))),
 			'seoTitle' => $this->pick_metadata($metadata, array('seo_title', 'meta_title')),
 			'metaDescription' => $this->pick_metadata($metadata, array('meta_description', 'seo_description')),
 			'focusKeyword' => $this->pick_metadata($metadata, array('focus_keyword')),
@@ -2039,7 +2235,7 @@ final class AI_Article_Publisher
 
 	private function is_allowed_metadata_key($key)
 	{
-		return in_array($key, array('title', 'slug', 'excerpt', 'brief', 'image_prompt', 'featured_image_prompt', 'prompt', 'seo_title', 'meta_title', 'meta_description', 'seo_description', 'focus_keyword', 'canonical_url', 'featured_image_url', 'image_url', 'categories', 'category'), true);
+		return in_array($key, array('title', 'slug', 'excerpt', 'brief', 'image_prompt', 'featured_image_prompt', 'prompt', 'seo_title', 'meta_title', 'meta_description', 'seo_description', 'focus_keyword', 'canonical_url', 'featured_image_url', 'image_url', 'categories', 'category', 'tags', 'tag'), true);
 	}
 
 	private function pick_metadata($metadata, $keys)

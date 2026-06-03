@@ -9,6 +9,7 @@ import { consumeTokens, TOKEN_COSTS } from "@/lib/tokens";
 import { applySeoUpdate } from "@/lib/wp-seo";
 import {
   ensureCategory,
+  ensureTag,
   createPost,
   uploadFeaturedMedia,
 } from "@/lib/wp";
@@ -93,6 +94,11 @@ export async function POST(request: Request) {
     let featuredMediaId: number | undefined;
     let featuredImageUrl: string | undefined;
     const categoryIds = new Set<number>(payload.selectedCategoryIds);
+    const tagIds = new Set<number>(payload.selectedTagIds);
+    const tagNames = new Set<string>([
+      ...payload.newTagNames,
+      ...payload.suggestedTags,
+    ]);
 
     if (payload.newCategoryName?.trim()) {
       const createdOrExistingCategory = await ensureCategory(
@@ -100,6 +106,11 @@ export async function POST(request: Request) {
         wpConfig,
       );
       categoryIds.add(createdOrExistingCategory.id);
+    }
+
+    for (const name of tagNames) {
+      const createdOrExistingTag = await ensureTag(name, wpConfig);
+      tagIds.add(createdOrExistingTag.id);
     }
 
     if (payload.featuredImageBase64 && payload.featuredImageMime) {
@@ -151,6 +162,7 @@ export async function POST(request: Request) {
       date: payload.status === "future" ? payload.scheduledAt : undefined,
       featuredMediaId,
       categories: Array.from(categoryIds),
+      tags: Array.from(tagIds),
     }, wpConfig);
 
     const seoUpdate = await applySeoUpdate({
@@ -179,6 +191,7 @@ export async function POST(request: Request) {
       link: createdPost.link,
       status: createdPost.status,
       categories: Array.from(categoryIds),
+      tags: Array.from(tagIds),
       inlineImages,
       seoUpdate,
       featuredImage: featuredMediaId

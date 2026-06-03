@@ -24,6 +24,7 @@ type ToastState = { type: "success" | "error" | "info"; message: string };
 type PublishMode = "draft" | "publish" | "future";
 type WorkspaceMode = "manual" | "google-doc" | "news";
 type CategoryOption = { id: number; name: string; slug: string; count?: number };
+type TagOption = { id: number; name: string; slug: string; count?: number };
 type GeneratedImageState = {
   imageBase64: string;
   mimeType: string;
@@ -203,6 +204,9 @@ export default function HomePage() {
   const [categories, setCategories] = useState<CategoryOption[]>([]);
   const [selectedCategoryIds, setSelectedCategoryIds] = useState<number[]>([]);
   const [newCategoryName, setNewCategoryName] = useState("");
+  const [tags, setTags] = useState<TagOption[]>([]);
+  const [selectedTagIds, setSelectedTagIds] = useState<number[]>([]);
+  const [newTagNames, setNewTagNames] = useState("");
   const [seoProvider, setSeoProvider] = useState<SEOProvider>("None");
   const [seoPayload, setSeoPayload] = useState<SeoPayload>(initialSeoPayload);
   const [toast, setToast] = useState<ToastState | null>(null);
@@ -240,6 +244,7 @@ export default function HomePage() {
   const [isPublishingGoogleDoc, setIsPublishingGoogleDoc] = useState(false);
   const [isAutoPublishingNews, setIsAutoPublishingNews] = useState(false);
   const [isLoadingCategories, setIsLoadingCategories] = useState(false);
+  const [isLoadingTags, setIsLoadingTags] = useState(false);
 
   const selectedSite = account?.wordpressSites.find((site) => site.id === selectedSiteId) ?? null;
   const hasSiteConfigured = (account?.wordpressSites.length || 0) > 0;
@@ -325,6 +330,30 @@ export default function HomePage() {
     }
   };
 
+  const loadTags = async (siteId: string, showToastOnError = false) => {
+    try {
+      setIsLoadingTags(true);
+      const response = await fetch(`/api/wp-tags?siteId=${encodeURIComponent(siteId)}`);
+      if (!response.ok) throw new Error(await getApiError(response));
+      const data = (await response.json()) as { tags: TagOption[] };
+      const nextTags = data.tags || [];
+      setTags(nextTags);
+      setSelectedTagIds((current) =>
+        current.filter((id) => nextTags.some((tag) => tag.id === id)),
+      );
+    } catch (error) {
+      if (showToastOnError) {
+        setToast({
+          type: "error",
+          message:
+            error instanceof Error ? error.message : "Failed to load WordPress tags.",
+        });
+      }
+    } finally {
+      setIsLoadingTags(false);
+    }
+  };
+
   useEffect(() => {
     if (status === "unauthenticated") {
       router.replace("/login");
@@ -346,10 +375,14 @@ export default function HomePage() {
     if (!selectedSiteId) {
       setCategories([]);
       setSelectedCategoryIds([]);
+      setTags([]);
+      setSelectedTagIds([]);
       return;
     }
     setSelectedCategoryIds([]);
+    setSelectedTagIds([]);
     void loadCategories(selectedSiteId, false);
+    void loadTags(selectedSiteId, false);
   }, [selectedSiteId]);
 
   const syncBalance = (remaining?: number) => {
@@ -471,6 +504,9 @@ export default function HomePage() {
           inPostImageCount,
           selectedCategoryIds,
           newCategoryName: newCategoryName.trim(),
+          selectedTagIds,
+          newTagNames,
+          suggestedTags,
           seoProvider,
           seoPayload,
         }),
@@ -482,6 +518,10 @@ export default function HomePage() {
       if (newCategoryName.trim()) {
         setNewCategoryName("");
         void loadCategories(selectedSiteId, false);
+      }
+      if (newTagNames.trim() || suggestedTags.length > 0) {
+        setNewTagNames("");
+        void loadTags(selectedSiteId, false);
       }
       setToast({
         type: data.seoUpdate?.ok ? "success" : "info",
@@ -518,6 +558,8 @@ export default function HomePage() {
               : undefined,
           selectedCategoryIds,
           newCategoryName: newCategoryName.trim(),
+          selectedTagIds,
+          newTagNames,
           seoProvider,
         }),
       });
@@ -528,6 +570,10 @@ export default function HomePage() {
       if (newCategoryName.trim()) {
         setNewCategoryName("");
         void loadCategories(selectedSiteId, false);
+      }
+      if (newTagNames.trim()) {
+        setNewTagNames("");
+        void loadTags(selectedSiteId, false);
       }
       setToast({ type: "success", message: `Google Doc "${data.title}" published.` });
     } catch (error) {
@@ -564,6 +610,8 @@ export default function HomePage() {
             newsPublishMode === "future" ? toIsoFromLocalDateTime(newsScheduledAtLocal) : undefined,
           selectedCategoryIds,
           newCategoryName: newCategoryName.trim(),
+          selectedTagIds,
+          newTagNames,
           inPostImageCount,
           seoProvider,
         }),
@@ -572,6 +620,14 @@ export default function HomePage() {
       const data = (await response.json()) as NewsAutoPublishResultState;
       setNewsAutoPublishResult(data);
       syncBalance(data.tokenCharge?.remaining);
+      if (newCategoryName.trim()) {
+        setNewCategoryName("");
+        void loadCategories(selectedSiteId, false);
+      }
+      if (newTagNames.trim()) {
+        setNewTagNames("");
+        void loadTags(selectedSiteId, false);
+      }
       setToast({
         type: data.failed > 0 ? "info" : "success",
         message:
@@ -723,11 +779,12 @@ export default function HomePage() {
             <div className="section-header">
               <div>
                 <p className="eyebrow">Publishing Rules</p>
-                <h2 className="mt-1 text-sm font-semibold text-slate-950">Categories and SEO provider</h2>
+                <h2 className="mt-1 text-sm font-semibold text-slate-950">Categories, tags, and SEO provider</h2>
               </div>
             </div>
 
             <div className="mt-4 grid gap-4 lg:grid-cols-[minmax(0,1.3fr)_minmax(0,0.7fr)]">
+              <div className="space-y-4">
               <div className="panel-muted px-4 py-4">
                 <div className="flex items-center justify-between gap-3">
                   <p className="text-xs font-semibold text-slate-900">Site categories</p>
@@ -771,11 +828,61 @@ export default function HomePage() {
                 </div>
               </div>
 
+                <div className="panel-muted px-4 py-4">
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="text-xs font-semibold text-slate-900">Site tags</p>
+                    {isLoadingTags ? <span className="badge-neutral">Loading</span> : null}
+                  </div>
+                  <div className="mt-3">
+                    {!selectedSite ? (
+                      <EmptyState title="No site selected" description="Choose a site to load tags." />
+                    ) : tags.length === 0 ? (
+                      <EmptyState
+                        title={isLoadingTags ? "Loading tags" : "No tags found"}
+                        description={isLoadingTags ? "Pulling tags from WordPress." : "This site does not currently expose any tags."}
+                      />
+                    ) : (
+                      <div className="flex flex-wrap gap-2">
+                        {tags.map((tag) => {
+                          const selected = selectedTagIds.includes(tag.id);
+                          return (
+                            <button
+                              key={tag.id}
+                              type="button"
+                              className={`rounded-full border px-3 py-1.5 text-xs font-medium transition ${
+                                selected
+                                  ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+                                  : "border-slate-200 bg-white text-slate-600 hover:border-slate-300"
+                              }`}
+                              onClick={() =>
+                                setSelectedTagIds((current) =>
+                                  current.includes(tag.id)
+                                    ? current.filter((id) => id !== tag.id)
+                                    : [...current, tag.id],
+                                )
+                              }
+                            >
+                              {tag.name}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+
               <div className="space-y-4">
                 <div className="panel-muted px-4 py-4">
                   <label className="label">Create category on publish</label>
                   <input className="input" value={newCategoryName} onChange={(event) => setNewCategoryName(event.target.value)} placeholder="Optional new category" />
                   <p className="helper">Only used if the category does not already exist.</p>
+                </div>
+
+                <div className="panel-muted px-4 py-4">
+                  <label className="label">Create tags on publish</label>
+                  <input className="input" value={newTagNames} onChange={(event) => setNewTagNames(event.target.value)} placeholder="ai publishing, wordpress automation" />
+                  <p className="helper">Comma-separated tags are created if missing, then attached to the post.</p>
                 </div>
 
                 <div className="panel-muted px-4 py-4">

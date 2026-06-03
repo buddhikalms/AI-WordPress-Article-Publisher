@@ -3,11 +3,11 @@ import { TokenReason } from "@prisma/client";
 import { requireVerifiedUser } from "@/lib/auth-session";
 import { readGoogleDocPost } from "@/lib/google-docs";
 import { HttpError, toErrorResponse } from "@/lib/errors";
-import { generateFeaturedImage } from "@/lib/openai";
+import { generateFeaturedImage, generateSeoPayloadForArticle } from "@/lib/openai";
 import { googleDocImportRequestSchema } from "@/lib/schemas";
 import { consumeTokens, TOKEN_COSTS } from "@/lib/tokens";
 import { getUserWordPressConfig } from "@/lib/user-wordpress";
-import { createPost, ensureCategory, uploadFeaturedMedia } from "@/lib/wp";
+import { createPost, ensureCategory, ensureTag, uploadFeaturedMedia } from "@/lib/wp";
 import { applySeoUpdate } from "@/lib/wp-seo";
 
 export const runtime = "nodejs";
@@ -135,6 +135,11 @@ export async function POST(request: Request) {
 
     const categoryIds = new Set<number>(payload.selectedCategoryIds);
     const categoryNames = new Set<string>(draft.categories);
+    const tagIds = new Set<number>(payload.selectedTagIds);
+    const tagNames = new Set<string>([
+      ...draft.tags,
+      ...payload.newTagNames,
+    ]);
     if (payload.newCategoryName?.trim()) {
       categoryNames.add(payload.newCategoryName.trim());
     }
@@ -142,6 +147,11 @@ export async function POST(request: Request) {
     for (const name of categoryNames) {
       const category = await ensureCategory(name, wpConfig);
       categoryIds.add(category.id);
+    }
+
+    for (const name of tagNames) {
+      const tag = await ensureTag(name, wpConfig);
+      tagIds.add(tag.id);
     }
 
     const docImageUrls = [
@@ -215,21 +225,33 @@ export async function POST(request: Request) {
 
     const scheduledAt =
       payload.status === "future" ? payload.scheduledAt : undefined;
+    const excerpt =
+      draft.excerpt || truncate(stripHtml(draft.html), 160) || draft.title;
     const createdPost = await createPost(
       {
         title: draft.title,
         slug: draft.slug || undefined,
         html: htmlForPublish,
-        excerpt: draft.excerpt || truncate(stripHtml(draft.html), 160) || draft.title,
+        excerpt,
         status: payload.status,
         date: scheduledAt,
         featuredMediaId: featuredMedia.id,
         categories: Array.from(categoryIds),
+        tags: Array.from(tagIds),
       },
       wpConfig,
     );
 
-    const seoPayload = buildSeoPayload(draft);
+    const seoPayload =
+      payload.seoProvider === "None"
+        ? buildSeoPayload(draft)
+        : await generateSeoPayloadForArticle({
+            title: draft.title,
+            html: htmlForPublish,
+            excerpt,
+            focusKeyword: draft.focusKeyword,
+            canonicalUrl: draft.canonicalUrl,
+          });
     const seoUpdate = await applySeoUpdate({
       postId: createdPost.id,
       provider: payload.seoProvider,
@@ -281,7 +303,9 @@ export async function POST(request: Request) {
       },
       importedImages: uploadedDocImages,
       categories: Array.from(categoryIds),
+      tags: Array.from(tagIds),
       seoUpdate,
+      seoSource: payload.seoProvider === "None" ? "skipped" : "ai",
       seoFilled: {
         seoTitle: !draft.seoTitle,
         metaDescription: !draft.metaDescription,

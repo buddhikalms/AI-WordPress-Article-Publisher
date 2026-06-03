@@ -15,6 +15,7 @@ import { consumeTokens, TOKEN_COSTS } from "@/lib/tokens";
 import {
   createPost,
   ensureCategory,
+  ensureTag,
   uploadFeaturedMedia,
 } from "@/lib/wp";
 
@@ -117,12 +118,17 @@ export async function POST(request: Request) {
     const payload = validation.data;
     const wpConfig = await getUserWordPressConfig(user.id, payload.siteId);
     const categoryIds = new Set<number>(payload.selectedCategoryIds);
+    const baseTagIds = new Set<number>(payload.selectedTagIds);
     if (payload.newCategoryName?.trim()) {
       const createdOrExistingCategory = await ensureCategory(
         payload.newCategoryName.trim(),
         wpConfig,
       );
       categoryIds.add(createdOrExistingCategory.id);
+    }
+    for (const name of payload.newTagNames) {
+      const createdOrExistingTag = await ensureTag(name, wpConfig);
+      baseTagIds.add(createdOrExistingTag.id);
     }
 
     const sourceArticles = await fetchNewsByCategory({
@@ -154,6 +160,7 @@ export async function POST(request: Request) {
       status: string;
       scheduledAt: string | null;
       categories: number[];
+      tags: number[];
       inlineImages: Array<{ id: number; sourceUrl: string; altText?: string }>;
       seoUpdate: Awaited<ReturnType<typeof applySeoUpdate>>;
     }> = [];
@@ -173,6 +180,11 @@ export async function POST(request: Request) {
           tone: payload.tone,
           wordCount: payload.wordCount,
         });
+        const tagIds = new Set<number>(baseTagIds);
+        for (const name of generated.meta.suggestedTags) {
+          const createdOrExistingTag = await ensureTag(name, wpConfig);
+          tagIds.add(createdOrExistingTag.id);
+        }
 
         const generatedImage = await generateFeaturedImage({
           title: generated.meta.title || source.title,
@@ -245,6 +257,7 @@ export async function POST(request: Request) {
             date: scheduledAt,
             featuredMediaId: featuredMedia.id,
             categories: Array.from(categoryIds),
+            tags: Array.from(tagIds),
           },
           wpConfig,
         );
@@ -304,6 +317,7 @@ export async function POST(request: Request) {
           status: createdPost.status,
           scheduledAt: scheduledAt || null,
           categories: Array.from(categoryIds),
+          tags: Array.from(tagIds),
           inlineImages,
           seoUpdate,
         });

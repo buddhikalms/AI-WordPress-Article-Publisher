@@ -6,9 +6,9 @@ Standalone WordPress plugin version of the workflows in this repo:
 - Featured image generation
 - Publish now, save draft, or schedule
 - Optional in-post image generation
-- Google Doc import with lightweight front matter support
+- Google Doc import with lightweight front matter support, embedded featured image upload, and AI SEO enrichment
 - NewsData category autopilot with OpenAI rewrites
-- Basic Yoast and AIOSEO post meta updates
+- Yoast and AIOSEO post meta updates with character-limited AI metadata for Google Doc imports
 
 ## Structure
 
@@ -38,6 +38,8 @@ Standalone WordPress plugin version of the workflows in this repo:
 
 - This plugin is single-site WordPress admin tooling. It does not include the SaaS app's auth, billing, token accounting, device lock, or multi-site account management.
 - Google Doc import expects a public doc link or doc ID. Private docs must be shared as "Anyone with the link can view" or published to the web.
+- If `featured_image_url` is empty, the importer uses the first image embedded in the Google Doc as the uploaded WordPress featured image.
+- When an SEO provider is selected for Google Doc import, AI generates AIOSEO/Yoast-ready title, description, focus keyphrase, and social metadata. SEO title is capped at 60 characters; descriptions are capped at 155 characters.
 - Yoast and AIOSEO support here is direct post-meta writing. If your SEO plugin requires extra indexing/rebuild steps, run those inside WordPress after publishing.
 - News Autopilot fetches from `https://newsdata.io/api/1/news`.
 
@@ -54,13 +56,16 @@ slug: best-ai-seo-tools-for-agencies
 excerpt: A practical comparison of AI SEO tools for agency teams.
 brief: Use a professional angle focused on agencies scaling content.
 categories: SEO, AI Tools
-seo_title: Best AI SEO Tools for Agencies in 2026
-meta_description: Compare the top AI SEO tools agencies can use to scale content and research.
+tags: ai seo, agency workflows, content automation
 focus_keyword: ai seo tools for agencies
-featured_image_url: https://example.com/image.jpg
+featured_image_url:
 ---
 
 # Best AI SEO Tools for Agencies
 
+Place your featured image directly below the title if `featured_image_url` is blank.
+
 Your article body here.
 ```
+
+Leave `seo_title` and `meta_description` out when you want AI Article Publisher to generate AIOSEO metadata automatically.

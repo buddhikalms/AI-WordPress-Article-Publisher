@@ -271,7 +271,9 @@ final class AIA_Admin_Screen
 				'title' => __('Google Doc Import', 'ai-article-publisher'),
 				'items' => array(
 					__('Use a public Google Doc URL or document ID.', 'ai-article-publisher'),
-					__('Front matter keys like `title`, `slug`, `excerpt`, `categories`, and `meta_description` are supported.', 'ai-article-publisher'),
+					__('Front matter keys like `title`, `slug`, `excerpt`, `categories`, `tags`, and `featured_image_url` are supported.', 'ai-article-publisher'),
+					__('If `featured_image_url` is blank, the first embedded Google Doc image is uploaded as the featured image.', 'ai-article-publisher'),
+					__('When AIOSEO or Yoast is selected, AI generates character-limited SEO fields for the imported article.', 'ai-article-publisher'),
 					__('Private docs must be shared as "Anyone with the link can view" or published to the web.', 'ai-article-publisher'),
 				),
 			),
@@ -296,12 +298,12 @@ final class AIA_Admin_Screen
 			. "excerpt: A practical comparison of AI SEO tools for agency teams.\n"
 			. "brief: Use a professional angle focused on agencies scaling content.\n"
 			. "categories: SEO, AI Tools\n"
-			. "seo_title: Best AI SEO Tools for Agencies in 2026\n"
-			. "meta_description: Compare the top AI SEO tools agencies can use to scale content and research.\n"
+			. "tags: ai seo, agency workflows, content automation\n"
 			. "focus_keyword: ai seo tools for agencies\n"
-			. "featured_image_url: https://example.com/image.jpg\n"
+			. "featured_image_url:\n"
 			. "---\n\n"
 			. "# Best AI SEO Tools for Agencies\n\n"
+			. "Place your featured image directly below the title if featured_image_url is blank.\n\n"
 			. "Your article body here.\n";
 
 		include __DIR__ . '/views/documentation-page.php';
