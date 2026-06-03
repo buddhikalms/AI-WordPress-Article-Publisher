@@ -14,12 +14,19 @@ export interface GoogleDocPostDraft {
   categories: string[];
   tags: string[];
   imageUrls: string[];
+  images: GoogleDocImage[];
   seoTitle?: string;
   metaDescription?: string;
   focusKeyword?: string;
   canonicalUrl?: string;
   featuredImageUrl?: string;
   imagePrompt?: string;
+}
+
+export interface GoogleDocImage {
+  url: string;
+  altText: string;
+  title: string;
 }
 
 const extractDocumentId = (input: string) => {
@@ -86,6 +93,13 @@ const stripHtml = (value: string) =>
     .replace(/\s+/g, " ")
     .trim();
 
+const htmlToText = (value: string) =>
+  stripHtml(
+    value
+      .replace(/<br\s*\/?>/gi, "\n")
+      .replace(/<\/(p|div|h[1-6]|li)>/gi, "\n"),
+  );
+
 const decodeHtmlAttribute = (value: string) =>
   value
     .replace(/&amp;/g, "&")
@@ -93,8 +107,6 @@ const decodeHtmlAttribute = (value: string) =>
     .replace(/&#39;/g, "'")
     .replace(/&lt;/g, "<")
     .replace(/&gt;/g, ">");
-
-const unique = <T>(items: T[]) => [...new Set(items)];
 
 const normalizeOptionalUrl = (value: string) => {
   if (!value.trim()) {
@@ -380,27 +392,113 @@ const parseGoogleDocMarkdown = (markdown: string, fallbackTitle: string) => {
   };
 };
 
-const extractImageUrlsFromHtml = (html: string, baseUrl: string) => {
-  const urls: string[] = [];
-  const imagePattern = /<img\b[^>]*\bsrc\s*=\s*(["'])(.*?)\1/gi;
+const getHtmlAttribute = (html: string, attribute: string) => {
+  const pattern = new RegExp(`\\b${attribute}\\s*=\\s*(["'])(.*?)\\1`, "i");
+  const match = html.match(pattern);
+  return match ? decodeHtmlAttribute(match[2]).trim() : "";
+};
+
+const normalizeHtmlImageUrl = (rawSrc: string, baseUrl: string) => {
+  if (!rawSrc || rawSrc.startsWith("data:")) {
+    return "";
+  }
+  try {
+    const resolved = new URL(rawSrc, baseUrl).toString();
+    return /^https?:\/\//i.test(resolved) ? resolved : "";
+  } catch {
+    return "";
+  }
+};
+
+const extractImageItemsFromHtml = (html: string, baseUrl: string) => {
+  const images: GoogleDocImage[] = [];
+  const seen = new Set<string>();
+  const imagePattern = /<img\b[^>]*>/gi;
   let match: RegExpExecArray | null;
 
   while ((match = imagePattern.exec(html))) {
-    const rawSrc = decodeHtmlAttribute(match[2]).trim();
-    if (!rawSrc || rawSrc.startsWith("data:")) {
+    const imageTag = match[0];
+    const url = normalizeHtmlImageUrl(getHtmlAttribute(imageTag, "src"), baseUrl);
+    if (!url || seen.has(url)) {
       continue;
     }
-    try {
-      const resolved = new URL(rawSrc, baseUrl).toString();
-      if (/^https?:\/\//i.test(resolved)) {
-        urls.push(resolved);
-      }
-    } catch {
-      // Ignore malformed image sources exported by Google Docs.
-    }
+    seen.add(url);
+    images.push({
+      url,
+      altText: getHtmlAttribute(imageTag, "alt"),
+      title: getHtmlAttribute(imageTag, "title"),
+    });
   }
 
-  return unique(urls);
+  return images;
+};
+
+const extractBodyHtml = (html: string) => {
+  const bodyMatch = html.match(/<body[^>]*>([\s\S]*?)<\/body>/i);
+  return (bodyMatch ? bodyMatch[1] : html).trim();
+};
+
+const stripGoogleDocChrome = (html: string) =>
+  html
+    .replace(/<script\b[\s\S]*?<\/script>/gi, "")
+    .replace(/<style\b[\s\S]*?<\/style>/gi, "")
+    .replace(/<meta\b[^>]*>/gi, "")
+    .replace(/<link\b[^>]*>/gi, "");
+
+const stripFrontMatterFromHtml = (html: string) => {
+  let output = html.trim();
+  output = output.replace(/^\s*<[^>]+>\s*---\s*<\/[^>]+>\s*/i, "");
+
+  let guard = 0;
+  while (guard < 40) {
+    const blockMatch = output.match(/^\s*<([a-z0-9]+)\b[^>]*>([\s\S]*?)<\/\1>\s*/i);
+    if (!blockMatch) {
+      break;
+    }
+    const text = htmlToText(blockMatch[2]);
+    if (text === "---") {
+      output = output.slice(blockMatch[0].length);
+      break;
+    }
+    const metadataMatch = text.match(/^([^:]{1,60}):\s*(.*)$/);
+    if (!metadataMatch || !allowedMetadataKeys.has(normalizeMetadataKey(metadataMatch[1]))) {
+      break;
+    }
+    output = output.slice(blockMatch[0].length);
+    guard += 1;
+  }
+
+  return output.trim();
+};
+
+const normalizeGoogleDocHtml = (html: string) =>
+  stripFrontMatterFromHtml(stripGoogleDocChrome(extractBodyHtml(html)))
+    .replace(/\sclass="[^"]*"/gi, "")
+    .replace(/\sstyle="[^"]*"/gi, "")
+    .replace(/\sid="[^"]*"/gi, "")
+    .replace(/<span\b[^>]*>([\s\S]*?)<\/span>/gi, "$1")
+    .replace(
+      /<p>\s*(#{1,3})\s+([\s\S]*?)<\/p>/gi,
+      (_all, hashes: string, text: string) =>
+        `<h${hashes.length}>${text.trim()}</h${hashes.length}>`,
+    )
+    .replace(/<p>\s*<\/p>/gi, "")
+    .trim();
+
+const hasUsefulGoogleDocHtml = (html: string) =>
+  Boolean(htmlToText(html).trim() || /<img\b/i.test(html));
+
+const mergeImageItems = (items: GoogleDocImage[]) => {
+  const seen = new Set<string>();
+  const merged: GoogleDocImage[] = [];
+  for (const item of items) {
+    if (!item.url || seen.has(item.url)) {
+      continue;
+    }
+    seen.add(item.url);
+    merged.push(item);
+  }
+  return merged;
 };
 
 const fetchGoogleDocHtml = async (documentId: string) => {
@@ -415,7 +513,7 @@ const fetchGoogleDocHtml = async (documentId: string) => {
     if (isAccessWallResponse(response, body)) {
       continue;
     }
-    if (!response.ok || !/<img\b/i.test(body)) {
+    if (!response.ok) {
       continue;
     }
 
@@ -477,11 +575,21 @@ export const readGoogleDocPost = async (input: { document: string }) => {
 
   const parsed = parseGoogleDocMarkdown(markdown, "Untitled");
   const htmlExport = await fetchGoogleDocHtml(documentId);
-  const imageUrls = htmlExport
-    ? extractImageUrlsFromHtml(htmlExport.html, htmlExport.url)
+  const htmlFromDoc = htmlExport ? normalizeGoogleDocHtml(htmlExport.html) : "";
+  const htmlImages = htmlExport
+    ? extractImageItemsFromHtml(htmlExport.html, htmlExport.url)
     : [];
-  const featuredImageUrl = parsed.featuredImageUrl || imageUrls[0];
-  const html = appendImagesIfMissing(parsed.html, imageUrls, parsed.title);
+  const featuredImage = parsed.featuredImageUrl
+    ? { url: parsed.featuredImageUrl, altText: "", title: "" }
+    : htmlImages[0];
+  const images = mergeImageItems([
+    ...(featuredImage ? [featuredImage] : []),
+    ...htmlImages,
+  ]);
+  const imageUrls = images.map((image) => image.url);
+  const featuredImageUrl = featuredImage?.url;
+  const baseHtml = hasUsefulGoogleDocHtml(htmlFromDoc) ? htmlFromDoc : parsed.html;
+  const html = appendImagesIfMissing(baseHtml, imageUrls, parsed.title);
 
   if (!parsed.title.trim()) {
     throw new HttpError(400, "Google Doc is missing a usable title.");
@@ -496,6 +604,7 @@ export const readGoogleDocPost = async (input: { document: string }) => {
     ...parsed,
     html,
     imageUrls,
+    images,
     featuredImageUrl,
   } satisfies GoogleDocPostDraft;
 };

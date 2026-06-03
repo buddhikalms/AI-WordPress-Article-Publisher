@@ -81,23 +81,37 @@ const escapeRegExp = (value: string) =>
 
 const replaceImageSources = (
   html: string,
-  replacements: Map<string, string>,
+  replacements: Map<string, { sourceUrl: string; altText: string; title: string }>,
 ) => {
-  let updated = html;
-  replacements.forEach((nextUrl, originalUrl) => {
-    updated = updated.replace(
-      new RegExp(`(src\\s*=\\s*["'])${escapeRegExp(originalUrl)}(["'])`, "g"),
-      `$1${nextUrl}$2`,
+  return html.replace(/<img\b[^>]*>/gi, (imageTag) => {
+    const srcMatch = imageTag.match(/\bsrc\s*=\s*(["'])(.*?)\1/i);
+    const src = srcMatch?.[2]?.replace(/&amp;/g, "&") || "";
+    const replacement = replacements.get(src);
+    if (!replacement) {
+      return imageTag;
+    }
+
+    let updated = imageTag.replace(
+      new RegExp(`(src\\s*=\\s*["'])${escapeRegExp(srcMatch![2])}(["'])`, "i"),
+      `$1${replacement.sourceUrl}$2`,
     );
-    updated = updated.replace(
-      new RegExp(
-        `(src\\s*=\\s*["'])${escapeRegExp(originalUrl.replace(/&/g, "&amp;"))}(["'])`,
-        "g",
-      ),
-      `$1${nextUrl}$2`,
-    );
+    const attributes = {
+      alt: replacement.altText,
+      title: replacement.title,
+    };
+    Object.entries(attributes).forEach(([name, value]) => {
+      const escaped = value.replace(/&/g, "&amp;").replace(/"/g, "&quot;");
+      if (new RegExp(`\\b${name}\\s*=`, "i").test(updated)) {
+        updated = updated.replace(
+          new RegExp(`\\b${name}\\s*=\\s*(["'])(.*?)\\1`, "i"),
+          `${name}="${escaped}"`,
+        );
+      } else {
+        updated = updated.replace(/\s*\/?>$/, ` ${name}="${escaped}" />`);
+      }
+    });
+    return updated;
   });
-  return updated;
 };
 
 export async function POST(request: Request) {
@@ -154,34 +168,39 @@ export async function POST(request: Request) {
       tagIds.add(tag.id);
     }
 
-    const docImageUrls = [
-      ...new Set(
-        [
-          draft.featuredImageUrl,
-          ...draft.imageUrls,
-        ].filter((url): url is string => Boolean(url)),
-      ),
-    ];
+    const docImages = draft.images.length > 0
+      ? draft.images
+      : draft.imageUrls.map((url) => ({ url, altText: "", title: "" }));
     const uploadedDocImages: Array<{
       originalUrl: string;
       id: number;
       sourceUrl: string;
+      altText: string;
+      title: string;
     }> = [];
-    const imageSourceReplacements = new Map<string, string>();
+    const imageSourceReplacements = new Map<
+      string,
+      { sourceUrl: string; altText: string; title: string }
+    >();
 
-    for (let index = 0; index < docImageUrls.length; index += 1) {
-      const originalUrl = docImageUrls[index];
+    for (let index = 0; index < docImages.length; index += 1) {
+      const docImage = docImages[index];
+      const originalUrl = docImage.url;
       const downloaded = await fetchImageAsBase64(originalUrl);
+      const mediaTitle = docImage.title || docImage.altText || `${draft.title} image ${index + 1}`;
+      const altText =
+        docImage.altText ||
+        docImage.title ||
+        (index === 0
+          ? `Featured image for ${draft.title}`
+          : `Image ${index + 1} for ${draft.title}`);
       const uploaded = await uploadFeaturedMedia(
         {
           imageBase64: downloaded.imageBase64,
           mimeType: downloaded.mimeType,
-          title: `${draft.title} image ${index + 1}`,
+          title: mediaTitle,
           filenameSuggestion: `${draft.slug || "google-doc"}-${index + 1}`,
-          altText:
-            index === 0
-              ? `Featured image for ${draft.title}`
-              : `Image ${index + 1} for ${draft.title}`,
+          altText,
         },
         wpConfig,
       );
@@ -190,8 +209,14 @@ export async function POST(request: Request) {
         originalUrl,
         id: uploaded.id,
         sourceUrl: uploaded.source_url,
+        altText,
+        title: mediaTitle,
       });
-      imageSourceReplacements.set(originalUrl, uploaded.source_url);
+      imageSourceReplacements.set(originalUrl, {
+        sourceUrl: uploaded.source_url,
+        altText,
+        title: mediaTitle,
+      });
     }
 
     const generatedFeaturedImage =

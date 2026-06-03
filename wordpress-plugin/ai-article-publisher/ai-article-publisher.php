@@ -1675,28 +1675,65 @@ final class AI_Article_Publisher
 			$category_ids = array_values(array_unique($category_ids));
 			$tag_names = isset($draft['tags']) ? $this->sanitize_string_list($draft['tags']) : array();
 
-			$featured_image = !empty($draft['featuredImageUrl'])
-				? $this->fetch_remote_image_as_base64($draft['featuredImageUrl'])
-				: $this->generate_featured_image(
+			$uploaded_doc_images = array();
+			$image_replacements = array();
+			$doc_images = !empty($draft['images']) && is_array($draft['images']) ? $draft['images'] : array();
+			foreach ($doc_images as $index => $doc_image) {
+				if (empty($doc_image['url'])) {
+					continue;
+				}
+				$downloaded = $this->fetch_remote_image_as_base64($doc_image['url']);
+				$media_title = !empty($doc_image['title']) ? $doc_image['title'] : (!empty($doc_image['altText']) ? $doc_image['altText'] : sprintf('%s image %d', $draft['title'], $index + 1));
+				$alt_text = !empty($doc_image['altText']) ? $doc_image['altText'] : (!empty($doc_image['title']) ? $doc_image['title'] : (($index === 0) ? 'Featured image for ' . $draft['title'] : sprintf('Image %d for %s', $index + 1, $draft['title'])));
+				$uploaded = $this->upload_base64_image_to_media(
+					$downloaded['imageBase64'],
+					$downloaded['mimeType'],
+					$media_title,
+					($draft['slug'] ? $draft['slug'] : 'google-doc') . '-' . ($index + 1) . '.png',
+					$alt_text
+				);
+				$uploaded_doc_images[] = array(
+					'originalUrl' => (string) $doc_image['url'],
+					'id' => (int) $uploaded['id'],
+					'sourceUrl' => (string) $uploaded['source_url'],
+					'altText' => $alt_text,
+					'title' => $media_title,
+				);
+				$image_replacements[(string) $doc_image['url']] = array(
+					'sourceUrl' => (string) $uploaded['source_url'],
+					'altText' => $alt_text,
+					'title' => $media_title,
+				);
+			}
+
+			if (!empty($uploaded_doc_images[0])) {
+				$featured_media = array(
+					'id' => (int) $uploaded_doc_images[0]['id'],
+					'source_url' => (string) $uploaded_doc_images[0]['sourceUrl'],
+				);
+			} else {
+				$featured_image = $this->generate_featured_image(
 					array(
 						'title' => $draft['title'],
 						'brief' => !empty($draft['imagePrompt']) ? $draft['imagePrompt'] : $draft['brief'],
 					)
 				);
-			$featured_media = $this->upload_base64_image_to_media(
-				$featured_image['imageBase64'],
-				$featured_image['mimeType'],
-				$draft['title'],
-				($draft['slug'] ? $draft['slug'] : 'featured-image') . '.png',
-				'Featured image for ' . $draft['title']
-			);
+				$featured_media = $this->upload_base64_image_to_media(
+					$featured_image['imageBase64'],
+					$featured_image['mimeType'],
+					$draft['title'],
+					($draft['slug'] ? $draft['slug'] : 'featured-image') . '.png',
+					'Featured image for ' . $draft['title']
+				);
+			}
 
-			$excerpt = $draft['excerpt'] ? $draft['excerpt'] : $this->truncate($this->strip_html_text($draft['html']), 160);
+			$html_for_publish = $this->replace_image_sources($draft['html'], $image_replacements);
+			$excerpt = $draft['excerpt'] ? $draft['excerpt'] : $this->truncate($this->strip_html_text($html_for_publish), 160);
 			$post = $this->create_post(
 				array(
 					'title' => $draft['title'],
 					'slug' => $draft['slug'],
-					'html' => $draft['html'],
+					'html' => $html_for_publish,
 					'excerpt' => $excerpt,
 					'status' => $status,
 					'date' => $scheduled_at,
@@ -1726,6 +1763,7 @@ final class AI_Article_Publisher
 						'sourceUrl' => (string) $featured_media['source_url'],
 						'source' => !empty($draft['featuredImageSource']) ? $draft['featuredImageSource'] : (!empty($draft['featuredImageUrl']) ? 'provided' : 'generated'),
 					),
+					'importedImages' => $uploaded_doc_images,
 					'categories' => $category_ids,
 					'tags' => $tag_names,
 					'seoUpdate' => $seo_update,
@@ -1992,14 +2030,39 @@ final class AI_Article_Publisher
 		}
 
 		$parsed = $this->parse_google_doc_markdown($body, 'Untitled');
-		$image_urls = $this->fetch_google_doc_image_urls($document_id);
+		$html_export = $this->fetch_google_doc_html_export($document_id);
+		$image_items = !empty($html_export['images']) ? $html_export['images'] : array();
+		$image_urls = array();
+		foreach ($image_items as $image_item) {
+			if (!empty($image_item['url'])) {
+				$image_urls[] = $image_item['url'];
+			}
+		}
 		$featured_image_source = empty($parsed['featuredImageUrl']) ? 'generated' : 'provided';
-		if (empty($parsed['featuredImageUrl']) && !empty($image_urls[0])) {
-			$parsed['featuredImageUrl'] = $image_urls[0];
+		if (!empty($parsed['featuredImageUrl'])) {
+			array_unshift(
+				$image_items,
+				array(
+					'url' => $parsed['featuredImageUrl'],
+					'altText' => '',
+					'title' => '',
+				)
+			);
+		} elseif (!empty($image_items[0]['url'])) {
+			$parsed['featuredImageUrl'] = $image_items[0]['url'];
 			$featured_image_source = 'google-doc';
 		}
+		$image_items = $this->dedupe_google_doc_images($image_items);
+		$image_urls = array();
+		foreach ($image_items as $image_item) {
+			$image_urls[] = $image_item['url'];
+		}
 		$parsed['imageUrls'] = $image_urls;
+		$parsed['images'] = $image_items;
 		$parsed['featuredImageSource'] = $featured_image_source;
+		if (!empty($html_export['html']) && $this->has_useful_google_doc_html($html_export['html'])) {
+			$parsed['html'] = $html_export['html'];
+		}
 		$parsed['html'] = $this->append_google_doc_images_if_missing($parsed['html'], $image_urls, $parsed['title']);
 		if (!$parsed['title']) {
 			throw new AI_Article_Publisher_Error('Google Doc is missing a usable title.', 400);
@@ -2020,7 +2083,7 @@ final class AI_Article_Publisher
 			|| preg_match('/ServiceLogin|Sign in - Google Accounts|To continue, sign in/i', (string) $body);
 	}
 
-	private function fetch_google_doc_image_urls($document_id)
+	private function fetch_google_doc_html_export($document_id)
 	{
 		$candidates = array(
 			sprintf('https://docs.google.com/document/d/%s/mobilebasic', rawurlencode($document_id)),
@@ -2038,27 +2101,25 @@ final class AI_Article_Publisher
 			if ($status_code < 200 || $status_code >= 300 || $this->is_google_access_wall($body, $final_url)) {
 				continue;
 			}
-			if (!preg_match('/<img\b/i', $body)) {
-				continue;
-			}
-			$images = $this->extract_image_urls_from_html($body, $url);
-			if (!empty($images)) {
-				return $images;
-			}
+			$html = $this->normalize_google_doc_html($body);
+			return array(
+				'html' => $html,
+				'images' => $this->extract_image_items_from_html($body, $url),
+			);
 		}
 
-		return array();
+		return array('html' => '', 'images' => array());
 	}
 
-	private function extract_image_urls_from_html($html, $base_url)
+	private function extract_image_items_from_html($html, $base_url)
 	{
-		$urls = array();
-		if (!preg_match_all('/<img\b[^>]*\bsrc\s*=\s*([\'"])(.*?)\1/i', (string) $html, $matches)) {
+		$images = array();
+		if (!preg_match_all('/<img\b[^>]*>/i', (string) $html, $matches)) {
 			return array();
 		}
 
-		foreach ($matches[2] as $raw_src) {
-			$src = html_entity_decode(trim((string) $raw_src), ENT_QUOTES, 'UTF-8');
+		foreach ($matches[0] as $image_tag) {
+			$src = html_entity_decode(trim((string) $this->get_html_attribute($image_tag, 'src')), ENT_QUOTES, 'UTF-8');
 			if (!$src || 0 === strpos($src, 'data:')) {
 				continue;
 			}
@@ -2068,11 +2129,91 @@ final class AI_Article_Publisher
 				$src = $this->resolve_url($src, $base_url);
 			}
 			if ($src && preg_match('/^https?:\/\//i', $src)) {
-				$urls[] = esc_url_raw($src);
+				$images[] = array(
+					'url' => esc_url_raw($src),
+					'altText' => sanitize_text_field($this->get_html_attribute($image_tag, 'alt')),
+					'title' => sanitize_text_field($this->get_html_attribute($image_tag, 'title')),
+				);
 			}
 		}
 
-		return array_values(array_unique(array_filter($urls)));
+		return $this->dedupe_google_doc_images($images);
+	}
+
+	private function get_html_attribute($html, $attribute)
+	{
+		if (preg_match('/\b' . preg_quote($attribute, '/') . '\s*=\s*([\'"])(.*?)\1/i', (string) $html, $matches)) {
+			return html_entity_decode((string) $matches[2], ENT_QUOTES, 'UTF-8');
+		}
+		return '';
+	}
+
+	private function dedupe_google_doc_images($images)
+	{
+		$seen = array();
+		$deduped = array();
+		foreach ($images as $image) {
+			if (empty($image['url']) || isset($seen[$image['url']])) {
+				continue;
+			}
+			$seen[$image['url']] = true;
+			$deduped[] = $image;
+		}
+		return $deduped;
+	}
+
+	private function normalize_google_doc_html($html)
+	{
+		$body = (string) $html;
+		if (preg_match('/<body[^>]*>([\s\S]*?)<\/body>/i', $body, $matches)) {
+			$body = (string) $matches[1];
+		}
+		$body = preg_replace('/<script\b[\s\S]*?<\/script>/i', '', $body);
+		$body = preg_replace('/<style\b[\s\S]*?<\/style>/i', '', $body);
+		$body = preg_replace('/<meta\b[^>]*>/i', '', $body);
+		$body = preg_replace('/<link\b[^>]*>/i', '', $body);
+		$body = $this->strip_front_matter_from_html($body);
+		$body = preg_replace('/\s(class|style|id)="[^"]*"/i', '', $body);
+		$body = preg_replace('/<span\b[^>]*>([\s\S]*?)<\/span>/i', '$1', $body);
+		$body = preg_replace_callback(
+			'/<p>\s*(#{1,3})\s+([\s\S]*?)<\/p>/i',
+			function ($matches) {
+				$level = strlen($matches[1]);
+				return '<h' . $level . '>' . trim((string) $matches[2]) . '</h' . $level . '>';
+			},
+			$body
+		);
+		$body = preg_replace('/<p>\s*<\/p>/i', '', $body);
+		return trim((string) wp_kses_post($body));
+	}
+
+	private function strip_front_matter_from_html($html)
+	{
+		$output = trim((string) $html);
+		$output = preg_replace('/^\s*<[^>]+>\s*---\s*<\/[^>]+>\s*/i', '', $output, 1);
+		$guard = 0;
+		while ($guard < 40 && preg_match('/^\s*<([a-z0-9]+)\b[^>]*>([\s\S]*?)<\/\1>\s*/i', $output, $matches)) {
+			$text = $this->normalize_meta_text($this->strip_html_text($matches[2]));
+			if ('---' === $text) {
+				$output = substr($output, strlen($matches[0]));
+				break;
+			}
+			if (!preg_match('/^([^:]{1,60}):\s*(.*)$/', $text, $metadata_match)) {
+				break;
+			}
+			$key = $this->normalize_metadata_key($metadata_match[1]);
+			if (!$this->is_allowed_metadata_key($key)) {
+				break;
+			}
+			$output = substr($output, strlen($matches[0]));
+			$guard++;
+		}
+		return trim($output);
+	}
+
+	private function has_useful_google_doc_html($html)
+	{
+		return (bool) trim($this->strip_html_text($html)) || preg_match('/<img\b/i', (string) $html);
 	}
 
 	private function resolve_url($path, $base_url)
@@ -2107,6 +2248,45 @@ final class AI_Article_Publisher
 		}
 
 		return trim((string) $html) . "\n" . implode("\n", $figures);
+	}
+
+	private function replace_image_sources($html, $replacements)
+	{
+		$updated = (string) $html;
+		if (empty($replacements) || !is_array($replacements)) {
+			return $updated;
+		}
+
+		return preg_replace_callback(
+			'/<img\b[^>]*>/i',
+			function ($matches) use ($replacements) {
+				$image_tag = $matches[0];
+				$src = $this->get_html_attribute($image_tag, 'src');
+				if (!$src || empty($replacements[$src])) {
+					$decoded_src = html_entity_decode((string) $src, ENT_QUOTES, 'UTF-8');
+					if (!$decoded_src || empty($replacements[$decoded_src])) {
+						return $image_tag;
+					}
+					$src = $decoded_src;
+				}
+
+				$replacement = $replacements[$src];
+				$updated = preg_replace('/\bsrc\s*=\s*([\'"])(.*?)\1/i', 'src="' . esc_url($replacement['sourceUrl']) . '"', $image_tag, 1);
+				$updated = $this->set_image_attribute($updated, 'alt', isset($replacement['altText']) ? $replacement['altText'] : '');
+				$updated = $this->set_image_attribute($updated, 'title', isset($replacement['title']) ? $replacement['title'] : '');
+				return $updated;
+			},
+			$updated
+		);
+	}
+
+	private function set_image_attribute($image_tag, $attribute, $value)
+	{
+		$value = esc_attr((string) $value);
+		if (preg_match('/\b' . preg_quote($attribute, '/') . '\s*=/i', $image_tag)) {
+			return preg_replace('/\b' . preg_quote($attribute, '/') . '\s*=\s*([\'"])(.*?)\1/i', $attribute . '="' . $value . '"', $image_tag, 1);
+		}
+		return preg_replace('/\s*\/?>$/', ' ' . $attribute . '="' . $value . '" />', $image_tag, 1);
 	}
 
 	private function parse_google_doc_markdown($markdown, $fallback_title)
