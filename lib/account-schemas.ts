@@ -97,6 +97,33 @@ export const setDefaultWordpressSiteSchema = z.object({
   siteId: z.string().trim().min(1),
 });
 
+export const updateProfileSchema = z.object({
+  name: z.string().trim().min(2, "Name must be at least 2 characters.").max(120),
+});
+
+export const changePasswordSchema = z
+  .object({
+    currentPassword: z.string().min(1, "Current password is required."),
+    newPassword: z.string().min(8, "New password must be at least 8 characters.").max(128),
+    confirmPassword: z.string().min(1, "Confirm your new password."),
+  })
+  .superRefine((value, context) => {
+    if (value.newPassword !== value.confirmPassword) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["confirmPassword"],
+        message: "New passwords do not match.",
+      });
+    }
+    if (value.currentPassword === value.newPassword) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["newPassword"],
+        message: "Choose a different password from your current password.",
+      });
+    }
+  });
+
 const packageBaseSchema = z.object({
   name: z.string().trim().min(2).max(120),
   slug: z.string().trim().min(2).max(120),

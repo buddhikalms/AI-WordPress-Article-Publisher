@@ -30,14 +30,24 @@ const emptyForm = {
   isDefault: false,
 };
 
+const emptyPasswordForm = {
+  currentPassword: "",
+  newPassword: "",
+  confirmPassword: "",
+};
+
 export default function AccountPage() {
   const router = useRouter();
   const { status } = useSession();
   const [account, setAccount] = useState<AccountPayload | null>(null);
   const [accountLoadError, setAccountLoadError] = useState<string | null>(null);
   const [form, setForm] = useState(emptyForm);
+  const [profileName, setProfileName] = useState("");
+  const [passwordForm, setPasswordForm] = useState(emptyPasswordForm);
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [savingProfile, setSavingProfile] = useState(false);
+  const [savingPassword, setSavingPassword] = useState(false);
   const [busySiteId, setBusySiteId] = useState<string | null>(null);
   const [toast, setToast] = useState<{ type: "success" | "error" | "info"; message: string } | null>(null);
 
@@ -47,6 +57,7 @@ export default function AccountPage() {
     const payload = await response.json();
     if (!response.ok) throw new Error(payload?.error || "Failed to load account.");
     setAccount(payload);
+    setProfileName(payload.user?.name || "");
   };
 
   useEffect(() => {
@@ -110,6 +121,52 @@ export default function AccountPage() {
       });
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleProfileSave = async (event: FormEvent) => {
+    event.preventDefault();
+    setSavingProfile(true);
+    try {
+      const response = await fetch("/api/account/profile", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: profileName }),
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload?.error || "Failed to update profile.");
+      await loadAccount();
+      setToast({ type: "success", message: payload?.message || "Profile updated." });
+    } catch (err) {
+      setToast({
+        type: "error",
+        message: err instanceof Error ? err.message : "Failed to update profile.",
+      });
+    } finally {
+      setSavingProfile(false);
+    }
+  };
+
+  const handlePasswordSave = async (event: FormEvent) => {
+    event.preventDefault();
+    setSavingPassword(true);
+    try {
+      const response = await fetch("/api/account/password", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(passwordForm),
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload?.error || "Failed to change password.");
+      setPasswordForm(emptyPasswordForm);
+      setToast({ type: "success", message: payload?.message || "Password changed." });
+    } catch (err) {
+      setToast({
+        type: "error",
+        message: err instanceof Error ? err.message : "Failed to change password.",
+      });
+    } finally {
+      setSavingPassword(false);
     }
   };
 
@@ -177,8 +234,8 @@ export default function AccountPage() {
 
   return (
     <DashboardShell
-      title="Site Settings"
-      subtitle="Manage connected WordPress properties and keep one default destination for the publishing workspace."
+      title="Account Settings"
+      subtitle="Manage your profile, password, and connected WordPress publishing destinations."
       role={account.user.role}
       userLabel={account.user.name || account.user.email || "User"}
       userEmail={account.user.email || null}
@@ -187,7 +244,7 @@ export default function AccountPage() {
         [
           { href: "/", label: "Workspace", hint: "Drafts, imports, and autopilot", group: "Workspace", icon: "workspace" },
           { href: "/billing", label: "Billing", hint: "Packages and purchases", group: "Revenue", icon: "billing" },
-          { href: "/account", label: "Sites", hint: "Manage connected WordPress sites", group: "Settings", icon: "sites" },
+          { href: "/account", label: "Account", hint: "Profile, password, and sites", group: "Settings", icon: "sites" },
           { href: "/admin", label: "Admin", hint: "Platform administration", visible: account.user.role === "ADMIN", group: "Operations", icon: "admin" },
         ] satisfies DashboardNavItem[]
       }
@@ -212,6 +269,87 @@ export default function AccountPage() {
                 <p className="mt-1 text-xs text-slate-500">One site can remain the default publishing destination.</p>
               </div>
             </div>
+          </section>
+
+          <section className="panel px-4 py-4 md:px-5">
+            <div className="section-header">
+              <div>
+                <p className="eyebrow">Profile Settings</p>
+                <h2 className="mt-1 text-sm font-semibold text-slate-950">Personal details</h2>
+              </div>
+            </div>
+
+            <form className="mt-4 grid gap-4 md:grid-cols-[minmax(0,1fr)_220px]" onSubmit={handleProfileSave}>
+              <div className="panel-muted px-4 py-4">
+                <label className="label">Display name</label>
+                <input
+                  className="input"
+                  value={profileName}
+                  onChange={(event) => setProfileName(event.target.value)}
+                  placeholder="Your name"
+                  required
+                />
+              </div>
+              <div className="panel-muted px-4 py-4">
+                <label className="label">Email address</label>
+                <input className="input" value={account.user.email || ""} disabled />
+                <p className="helper">Email changes are not enabled yet.</p>
+              </div>
+              <div className="md:col-span-2">
+                <button className="button-primary" type="submit" disabled={savingProfile}>
+                  {savingProfile ? "Saving..." : "Save profile"}
+                </button>
+              </div>
+            </form>
+          </section>
+
+          <section className="panel px-4 py-4 md:px-5">
+            <div className="section-header">
+              <div>
+                <p className="eyebrow">Security</p>
+                <h2 className="mt-1 text-sm font-semibold text-slate-950">Change password</h2>
+              </div>
+            </div>
+
+            <form className="mt-4 grid gap-4 md:grid-cols-3" onSubmit={handlePasswordSave}>
+              <div className="panel-muted px-4 py-4">
+                <label className="label">Current password</label>
+                <input
+                  className="input"
+                  type="password"
+                  value={passwordForm.currentPassword}
+                  onChange={(event) => setPasswordForm((current) => ({ ...current, currentPassword: event.target.value }))}
+                  required
+                />
+              </div>
+              <div className="panel-muted px-4 py-4">
+                <label className="label">New password</label>
+                <input
+                  className="input"
+                  type="password"
+                  value={passwordForm.newPassword}
+                  onChange={(event) => setPasswordForm((current) => ({ ...current, newPassword: event.target.value }))}
+                  minLength={8}
+                  required
+                />
+              </div>
+              <div className="panel-muted px-4 py-4">
+                <label className="label">Confirm password</label>
+                <input
+                  className="input"
+                  type="password"
+                  value={passwordForm.confirmPassword}
+                  onChange={(event) => setPasswordForm((current) => ({ ...current, confirmPassword: event.target.value }))}
+                  minLength={8}
+                  required
+                />
+              </div>
+              <div className="md:col-span-3">
+                <button className="button-primary" type="submit" disabled={savingPassword}>
+                  {savingPassword ? "Changing..." : "Change password"}
+                </button>
+              </div>
+            </form>
           </section>
 
           <section className="panel px-4 py-4 md:px-5">
