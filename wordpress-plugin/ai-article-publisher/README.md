@@ -6,9 +6,9 @@ Standalone WordPress plugin version of the workflows in this repo:
 - Featured image generation
 - Publish now, save draft, or schedule
 - Optional in-post image generation
-- Google Doc import with lightweight front matter support, embedded featured image upload, and AI SEO enrichment
+- Google Doc import with lightweight front matter support, direct document HTML preservation, embedded image upload, and document-provided SEO metadata
 - NewsData category autopilot with OpenAI rewrites
-- Yoast and AIOSEO post meta updates with character-limited AI metadata for Google Doc imports
+- Yoast and AIOSEO post meta updates with character-limited metadata for Google Doc imports
 
 ## Structure
 
@@ -39,7 +39,7 @@ Standalone WordPress plugin version of the workflows in this repo:
 - This plugin is single-site WordPress admin tooling. It does not include the SaaS app's auth, billing, token accounting, device lock, or multi-site account management.
 - Google Doc import expects a public doc link or doc ID. Private docs must be shared as "Anyone with the link can view" or published to the web.
 - If `featured_image_url` is empty, the importer uses the first image embedded in the Google Doc as the uploaded WordPress featured image.
-- When an SEO provider is selected for Google Doc import, AI generates AIOSEO/Yoast-ready title, description, focus keyphrase, and social metadata. SEO title is capped at 60 characters; descriptions are capped at 155 characters.
+- When an SEO provider is selected for Google Doc import, the plugin uses the Google Doc front matter or fallback document-derived metadata for AIOSEO/Yoast. No AI provider key is required for Google Doc import.
 - Yoast and AIOSEO support here is direct post-meta writing. If your SEO plugin requires extra indexing/rebuild steps, run those inside WordPress after publishing.
 - News Autopilot fetches from `https://newsdata.io/api/1/news`.
 

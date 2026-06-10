@@ -3,7 +3,6 @@ import { TokenReason } from "@prisma/client";
 import { requireVerifiedUser } from "@/lib/auth-session";
 import { readGoogleDocPost } from "@/lib/google-docs";
 import { HttpError, toErrorResponse } from "@/lib/errors";
-import { generateFeaturedImage, generateSeoPayloadForArticle } from "@/lib/openai";
 import { googleDocImportRequestSchema } from "@/lib/schemas";
 import { consumeTokens, TOKEN_COSTS } from "@/lib/tokens";
 import { getUserWordPressConfig } from "@/lib/user-wordpress";
@@ -76,8 +75,39 @@ const fetchImageAsBase64 = async (url: string) => {
   };
 };
 
-const escapeRegExp = (value: string) =>
-  value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const normalizeImageSourceKey = (value: string) => {
+  const decodedEntities = value
+    .replace(/&amp;/g, "&")
+    .replace(/&#38;/g, "&")
+    .replace(/^data:(image\/[a-z0-9.+-]+;base64,)/i, "$1")
+    .trim();
+
+  try {
+    return decodeURI(decodedEntities);
+  } catch {
+    return decodedEntities;
+  }
+};
+
+const getImageReplacement = (
+  replacements: Map<string, { sourceUrl: string; altText: string; title: string }>,
+  src: string,
+) => {
+  const candidates = [
+    src,
+    src.replace(/&amp;/g, "&"),
+    normalizeImageSourceKey(src),
+  ];
+
+  for (const candidate of candidates) {
+    const replacement = replacements.get(candidate);
+    if (replacement) {
+      return replacement;
+    }
+  }
+
+  return undefined;
+};
 
 const replaceImageSources = (
   html: string,
@@ -86,14 +116,14 @@ const replaceImageSources = (
   return html.replace(/<img\b[^>]*>/gi, (imageTag) => {
     const srcMatch = imageTag.match(/\bsrc\s*=\s*(["'])(.*?)\1/i);
     const src = srcMatch?.[2]?.replace(/&amp;/g, "&") || "";
-    const replacement = replacements.get(src);
+    const replacement = getImageReplacement(replacements, src);
     if (!replacement) {
       return imageTag;
     }
 
     let updated = imageTag.replace(
-      new RegExp(`(src\\s*=\\s*["'])${escapeRegExp(srcMatch![2])}(["'])`, "i"),
-      `$1${replacement.sourceUrl}$2`,
+      /\bsrc\s*=\s*(["'])(.*?)\1/i,
+      `src="${replacement.sourceUrl}"`,
     );
     const attributes = {
       alt: replacement.altText,
@@ -112,6 +142,62 @@ const replaceImageSources = (
     });
     return updated;
   });
+};
+
+const setAnchorAttribute = (anchorTag: string, attribute: string, value: string) => {
+  const escaped = value.replace(/&/g, "&amp;").replace(/"/g, "&quot;");
+  const withoutAttribute = anchorTag.replace(
+    new RegExp(`\\s*\\b${attribute}\\s*=\\s*(["'])(.*?)\\1`, "i"),
+    "",
+  );
+  return withoutAttribute.replace(/>$/, ` ${attribute}="${escaped}">`);
+};
+
+const openLinksInNewTabs = (html: string) =>
+  html.replace(/<a\b[^>]*>/gi, (anchorTag) => {
+    const href = anchorTag.match(/\bhref\s*=\s*(["'])(.*?)\1/i)?.[2] || "";
+    if (!href || href.startsWith("#")) {
+      return anchorTag;
+    }
+    return setAnchorAttribute(
+      setAnchorAttribute(anchorTag, "target", "_blank"),
+      "rel",
+      "noopener noreferrer",
+    );
+  });
+
+const removeImageSourceFromHtml = (html: string, imageUrl?: string) => {
+  if (!imageUrl?.trim()) {
+    return html;
+  }
+
+  const quotedUrl = imageUrl.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  let updated = html;
+  for (const tagName of ["figure", "p"]) {
+    updated = updated.replace(
+      new RegExp(`<${tagName}\\b[^>]*>[\\s\\S]*?<\\/${tagName}>`, "gi"),
+      (block) => {
+        if (!new RegExp(`<img\\b[^>]*\\bsrc\\s*=\\s*(["'])${quotedUrl}\\1`, "i").test(block)) {
+          return block;
+        }
+        const withoutImages = block.replace(/<img\b[^>]*>/gi, "");
+        return stripHtml(withoutImages) ? withoutImages : "";
+      },
+    );
+  }
+
+  updated = updated.replace(
+    new RegExp(`<img\\b[^>]*\\bsrc\\s*=\\s*(["'])${quotedUrl}\\1[^>]*>`, "gi"),
+    "",
+  );
+  return updated.replace(/<p\b[^>]*>\s*<\/p>/gi, "").trim();
+};
+
+const hasPublishablePostContent = (html: string) => {
+  if (stripHtml(html).length >= 80) {
+    return true;
+  }
+  return /<(h[1-6]|p|ul|ol|figure|img)\b/i.test(html);
 };
 
 export async function POST(request: Request) {
@@ -136,10 +222,7 @@ export async function POST(request: Request) {
       document: payload.document,
     });
 
-    const needsGeneratedImage = !draft.featuredImageUrl;
-    const requiredTokens =
-      TOKEN_COSTS.PUBLISH_POST +
-      (needsGeneratedImage ? TOKEN_COSTS.IMAGE_GENERATION : 0);
+    const requiredTokens = TOKEN_COSTS.PUBLISH_POST;
     if (user.tokenBalance < requiredTokens) {
       throw new HttpError(
         402,
@@ -168,7 +251,7 @@ export async function POST(request: Request) {
       tagIds.add(tag.id);
     }
 
-    const docImages = draft.images.length > 0
+    const docImages: typeof draft.images = draft.images.length > 0
       ? draft.images
       : draft.imageUrls.map((url) => ({ url, altText: "", title: "" }));
     const uploadedDocImages: Array<{
@@ -186,7 +269,13 @@ export async function POST(request: Request) {
     for (let index = 0; index < docImages.length; index += 1) {
       const docImage = docImages[index];
       const originalUrl = docImage.url;
-      const downloaded = await fetchImageAsBase64(originalUrl);
+      const downloaded =
+        docImage.imageBase64 && docImage.mimeType
+          ? {
+              imageBase64: docImage.imageBase64,
+              mimeType: docImage.mimeType,
+            }
+          : await fetchImageAsBase64(originalUrl);
       const mediaTitle = docImage.title || docImage.altText || `${draft.title} image ${index + 1}`;
       const altText =
         docImage.altText ||
@@ -217,41 +306,41 @@ export async function POST(request: Request) {
         altText,
         title: mediaTitle,
       });
+      imageSourceReplacements.set(normalizeImageSourceKey(originalUrl), {
+        sourceUrl: uploaded.source_url,
+        altText,
+        title: mediaTitle,
+      });
     }
-
-    const generatedFeaturedImage =
-      uploadedDocImages.length === 0
-        ? await generateFeaturedImage({
-            title: draft.title,
-            brief: draft.imagePrompt || draft.brief || draft.excerpt || draft.title,
-          })
-        : null;
 
     const featuredMedia = uploadedDocImages[0]
       ? {
           id: uploadedDocImages[0].id,
           source_url: uploadedDocImages[0].sourceUrl,
         }
-      : await uploadFeaturedMedia(
-          {
-            imageBase64: generatedFeaturedImage!.imageBase64,
-            mimeType: generatedFeaturedImage!.mimeType,
-            title: draft.title,
-            filenameSuggestion: `${draft.slug || "featured-image"}.png`,
-            altText: `Featured image for ${draft.title}`,
-          },
-          wpConfig,
-        );
+      : null;
 
-    const htmlForPublish = replaceImageSources(
-      draft.html,
-      imageSourceReplacements,
+    const htmlForPublish = removeImageSourceFromHtml(
+      openLinksInNewTabs(
+        replaceImageSources(
+          draft.html,
+          imageSourceReplacements,
+        ),
+      ),
+      featuredMedia?.source_url,
     );
+    if (!hasPublishablePostContent(htmlForPublish)) {
+      throw new HttpError(
+        400,
+        "Google Doc content could not be converted into a publishable post body. Please check that the document has readable text below the title and try again.",
+        { documentId: draft.documentId },
+      );
+    }
 
     const scheduledAt =
       payload.status === "future" ? payload.scheduledAt : undefined;
     const excerpt =
-      draft.excerpt || truncate(stripHtml(draft.html), 160) || draft.title;
+      draft.excerpt || truncate(stripHtml(htmlForPublish), 160) || draft.title;
     const createdPost = await createPost(
       {
         title: draft.title,
@@ -260,46 +349,24 @@ export async function POST(request: Request) {
         excerpt,
         status: payload.status,
         date: scheduledAt,
-        featuredMediaId: featuredMedia.id,
+        featuredMediaId: featuredMedia?.id,
         categories: Array.from(categoryIds),
         tags: Array.from(tagIds),
       },
       wpConfig,
     );
 
-    const seoPayload =
-      payload.seoProvider === "None"
-        ? buildSeoPayload(draft)
-        : await generateSeoPayloadForArticle({
-            title: draft.title,
-            html: htmlForPublish,
-            excerpt,
-            focusKeyword: draft.focusKeyword,
-            canonicalUrl: draft.canonicalUrl,
-          });
+    const seoPayload = buildSeoPayload(draft);
     const seoUpdate = await applySeoUpdate({
       postId: createdPost.id,
       provider: payload.seoProvider,
       seoPayload,
-      featuredImageUrl: featuredMedia.source_url,
+      featuredImageUrl: featuredMedia?.source_url,
       wpConfig,
     });
 
     const requestSeed =
       request.headers.get("x-request-id") || crypto.randomUUID();
-
-    if (needsGeneratedImage) {
-      await consumeTokens({
-        userId: user.id,
-        amount: TOKEN_COSTS.IMAGE_GENERATION,
-        reason: TokenReason.IMAGE_GENERATION,
-        action: "IMAGE_GENERATION",
-        description: `Generate Google Doc post image "${draft.title}"`,
-        requestId: `gdoc:image:${requestSeed}`,
-        referenceType: "google_doc_image",
-        referenceId: String(createdPost.id),
-      });
-    }
 
     const publishCharge = await consumeTokens({
       userId: user.id,
@@ -321,16 +388,18 @@ export async function POST(request: Request) {
       link: createdPost.link,
       status: createdPost.status,
       scheduledAt: scheduledAt || null,
-      featuredImage: {
-        id: featuredMedia.id,
-        sourceUrl: featuredMedia.source_url,
-        source: uploadedDocImages.length > 0 ? "google-doc" : "generated",
-      },
+      featuredImage: featuredMedia
+        ? {
+            id: featuredMedia.id,
+            sourceUrl: featuredMedia.source_url,
+            source: "google-doc",
+          }
+        : null,
       importedImages: uploadedDocImages,
       categories: Array.from(categoryIds),
       tags: Array.from(tagIds),
       seoUpdate,
-      seoSource: payload.seoProvider === "None" ? "skipped" : "ai",
+      seoSource: payload.seoProvider === "None" ? "skipped" : "google-doc",
       seoFilled: {
         seoTitle: !draft.seoTitle,
         metaDescription: !draft.metaDescription,
@@ -338,9 +407,7 @@ export async function POST(request: Request) {
         canonicalUrl: !draft.canonicalUrl,
       },
       tokenCharge: {
-        total:
-          TOKEN_COSTS.PUBLISH_POST +
-          (needsGeneratedImage ? TOKEN_COSTS.IMAGE_GENERATION : 0),
+        total: TOKEN_COSTS.PUBLISH_POST,
         remaining: publishCharge.tokenBalance,
       },
     });

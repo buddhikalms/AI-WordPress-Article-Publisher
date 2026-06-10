@@ -3,7 +3,7 @@
 /**
  * Plugin Name: AI Article Publisher
  * Description: Generate, import, and publish AI-assisted WordPress posts from the WordPress admin.
- * Version: 0.4.0
+ * Version: 0.7.2
  * Author: BUDDHIKA_VIRAJ
  * Requires at least: 6.4
  * Requires PHP: 7.4
@@ -627,12 +627,47 @@ final class AI_Article_Publisher
 		return esc_url_raw($value);
 	}
 
+	private function sanitize_optional_image_url($value)
+	{
+		$value = trim((string) $value);
+		if (!$value) {
+			return '';
+		}
+		if (!empty($this->parse_inline_base64_image_source($value))) {
+			return $value;
+		}
+		if (!filter_var($value, FILTER_VALIDATE_URL)) {
+			return '';
+		}
+		return esc_url_raw($value);
+	}
+
 	private function slugify($input)
 	{
 		$slug = strtolower(trim((string) $input));
 		$slug = preg_replace('/[^a-z0-9]+/', '-', $slug);
 		$slug = trim((string) $slug, '-');
 		return substr($slug, 0, 120);
+	}
+
+	private function slugify_metadata_value($input)
+	{
+		$value = trim((string) $input);
+		if (!$value) {
+			return '';
+		}
+
+		$parsed = wp_parse_url($value);
+		if (!empty($parsed['path'])) {
+			$value = (string) $parsed['path'];
+		}
+		$value = trim($value, " \t\n\r\0\x0B/");
+		if (false !== strpos($value, '/')) {
+			$parts = array_values(array_filter(explode('/', $value)));
+			$value = !empty($parts) ? end($parts) : $value;
+		}
+
+		return $this->slugify($value);
 	}
 
 	private function derive_focus_keyword($title)
@@ -1508,7 +1543,7 @@ final class AI_Article_Publisher
 
 	private function upload_base64_image_to_media($image_base64, $mime_type, $title, $filename_suggestion, $alt_text)
 	{
-		$cleaned = preg_replace('/^data:[^;]+;base64,/', '', (string) $image_base64);
+		$cleaned = preg_replace('/^(?:data:)?[^;]+;base64,/i', '', (string) $image_base64);
 		$bytes = base64_decode((string) $cleaned, true);
 		if (false === $bytes) {
 			throw new AI_Article_Publisher_Error('Invalid base64 image data.', 400);
@@ -1585,7 +1620,7 @@ final class AI_Article_Publisher
 			wp_set_post_tags($post_id, $payload['tags'], false);
 		}
 		if (!empty($payload['featured_media_id'])) {
-			set_post_thumbnail($post_id, (int) $payload['featured_media_id']);
+			$this->assign_featured_media_to_post($post_id, (int) $payload['featured_media_id']);
 		}
 
 		return array(
@@ -1593,6 +1628,27 @@ final class AI_Article_Publisher
 			'link' => get_permalink($post_id),
 			'status' => get_post_status($post_id),
 		);
+	}
+
+	private function assign_featured_media_to_post($post_id, $attachment_id)
+	{
+		$post_id = (int) $post_id;
+		$attachment_id = (int) $attachment_id;
+		if ($post_id <= 0 || $attachment_id <= 0) {
+			return;
+		}
+
+		wp_update_post(
+			array(
+				'ID' => $attachment_id,
+				'post_parent' => $post_id,
+			)
+		);
+
+		set_post_thumbnail($post_id, $attachment_id);
+		if ((int) get_post_thumbnail_id($post_id) !== $attachment_id) {
+			update_post_meta($post_id, '_thumbnail_id', $attachment_id);
+		}
 	}
 
 	private function apply_seo_meta($post_id, $provider, $seo_payload, $featured_image_url)
@@ -1682,7 +1738,12 @@ final class AI_Article_Publisher
 				if (empty($doc_image['url'])) {
 					continue;
 				}
-				$downloaded = $this->fetch_remote_image_as_base64($doc_image['url']);
+				$downloaded = !empty($doc_image['imageBase64']) && !empty($doc_image['mimeType'])
+					? array(
+						'imageBase64' => (string) $doc_image['imageBase64'],
+						'mimeType' => (string) $doc_image['mimeType'],
+					)
+					: $this->fetch_remote_image_as_base64($doc_image['url']);
 				$media_title = !empty($doc_image['title']) ? $doc_image['title'] : (!empty($doc_image['altText']) ? $doc_image['altText'] : sprintf('%s image %d', $draft['title'], $index + 1));
 				$alt_text = !empty($doc_image['altText']) ? $doc_image['altText'] : (!empty($doc_image['title']) ? $doc_image['title'] : (($index === 0) ? 'Featured image for ' . $draft['title'] : sprintf('Image %d for %s', $index + 1, $draft['title'])));
 				$uploaded = $this->upload_base64_image_to_media(
@@ -1704,31 +1765,29 @@ final class AI_Article_Publisher
 					'altText' => $alt_text,
 					'title' => $media_title,
 				);
+				$image_replacements[$this->normalize_image_source_key((string) $doc_image['url'])] = array(
+					'sourceUrl' => (string) $uploaded['source_url'],
+					'altText' => $alt_text,
+					'title' => $media_title,
+				);
 			}
 
-			if (!empty($uploaded_doc_images[0])) {
-				$featured_media = array(
+			$featured_media = !empty($uploaded_doc_images[0])
+				? array(
 					'id' => (int) $uploaded_doc_images[0]['id'],
 					'source_url' => (string) $uploaded_doc_images[0]['sourceUrl'],
-				);
-			} else {
-				$featured_image = $this->generate_featured_image(
-					array(
-						'title' => $draft['title'],
-						'brief' => !empty($draft['imagePrompt']) ? $draft['imagePrompt'] : $draft['brief'],
-					)
-				);
-				$featured_media = $this->upload_base64_image_to_media(
-					$featured_image['imageBase64'],
-					$featured_image['mimeType'],
-					$draft['title'],
-					($draft['slug'] ? $draft['slug'] : 'featured-image') . '.png',
-					'Featured image for ' . $draft['title']
-				);
-			}
+				)
+				: null;
 
-			$html_for_publish = $this->replace_image_sources($draft['html'], $image_replacements);
-			$excerpt = $draft['excerpt'] ? $draft['excerpt'] : $this->truncate($this->strip_html_text($html_for_publish), 160);
+			$content_html = wp_kses_post($this->open_links_in_new_tabs($this->replace_image_sources($draft['html'], $image_replacements)));
+			if (!empty($featured_media['source_url'])) {
+				$content_html = $this->remove_image_source_from_html($content_html, (string) $featured_media['source_url']);
+			}
+			if (!$this->has_publishable_post_content($content_html)) {
+				throw new AI_Article_Publisher_Error('Google Doc content could not be converted into a publishable post body. Please check that the document has readable text below the title and try again.', 400, array('documentId' => $draft['documentId']));
+			}
+			$excerpt = $draft['excerpt'] ? $draft['excerpt'] : $this->truncate($this->strip_html_text($content_html), 160);
+			$html_for_publish = $content_html;
 			$post = $this->create_post(
 				array(
 					'title' => $draft['title'],
@@ -1737,16 +1796,25 @@ final class AI_Article_Publisher
 					'excerpt' => $excerpt,
 					'status' => $status,
 					'date' => $scheduled_at,
-					'featured_media_id' => (int) $featured_media['id'],
+					'featured_media_id' => !empty($featured_media['id']) ? (int) $featured_media['id'] : 0,
 					'categories' => $category_ids,
 					'tags' => $tag_names,
 				)
 			);
+			foreach ($uploaded_doc_images as $uploaded_doc_image) {
+				if (!empty($uploaded_doc_image['id'])) {
+					wp_update_post(
+						array(
+							'ID' => (int) $uploaded_doc_image['id'],
+							'post_parent' => (int) $post['id'],
+						)
+					);
+				}
+			}
 
-			$seo_payload = ('None' === $seo_provider)
-				? $this->build_google_doc_fallback_seo_payload($draft, $excerpt, (string) $featured_media['source_url'])
-				: $this->generate_seo_payload_for_article($draft, $excerpt, (string) $featured_media['source_url']);
-			$seo_update = $this->apply_seo_meta((int) $post['id'], $seo_provider, $seo_payload, (string) $featured_media['source_url']);
+			$featured_image_url = !empty($featured_media['source_url']) ? (string) $featured_media['source_url'] : '';
+			$seo_payload = $this->build_google_doc_fallback_seo_payload($draft, $excerpt, $featured_image_url);
+			$seo_update = $this->apply_seo_meta((int) $post['id'], $seo_provider, $seo_payload, $featured_image_url);
 			$this->add_log('Google Docs', 'import_google_doc', 'success', '', (int) $post['id']);
 
 			wp_send_json_success(
@@ -1758,16 +1826,18 @@ final class AI_Article_Publisher
 					'postId' => (int) $post['id'],
 					'link' => (string) $post['link'],
 					'status' => (string) $post['status'],
-					'featuredImage' => array(
-						'id' => (int) $featured_media['id'],
-						'sourceUrl' => (string) $featured_media['source_url'],
-						'source' => !empty($draft['featuredImageSource']) ? $draft['featuredImageSource'] : (!empty($draft['featuredImageUrl']) ? 'provided' : 'generated'),
-					),
+					'featuredImage' => $featured_media
+						? array(
+							'id' => (int) $featured_media['id'],
+							'sourceUrl' => (string) $featured_media['source_url'],
+							'source' => 'google-doc',
+						)
+						: null,
 					'importedImages' => $uploaded_doc_images,
 					'categories' => $category_ids,
 					'tags' => $tag_names,
 					'seoUpdate' => $seo_update,
-					'seoSource' => ('None' === $seo_provider) ? 'skipped' : 'ai',
+					'seoSource' => ('None' === $seo_provider) ? 'skipped' : 'google-doc',
 				)
 			);
 		} catch (Throwable $error) {
@@ -2038,7 +2108,7 @@ final class AI_Article_Publisher
 				$image_urls[] = $image_item['url'];
 			}
 		}
-		$featured_image_source = empty($parsed['featuredImageUrl']) ? 'generated' : 'provided';
+		$featured_image_source = empty($parsed['featuredImageUrl']) ? 'none' : 'provided';
 		if (!empty($parsed['featuredImageUrl'])) {
 			array_unshift(
 				$image_items,
@@ -2060,10 +2130,11 @@ final class AI_Article_Publisher
 		$parsed['imageUrls'] = $image_urls;
 		$parsed['images'] = $image_items;
 		$parsed['featuredImageSource'] = $featured_image_source;
-		if (!empty($html_export['html']) && $this->has_useful_google_doc_html($html_export['html'])) {
+		if (!empty($html_export['html']) && $this->is_google_doc_html_export_complete($html_export['html'], $parsed['html'])) {
 			$parsed['html'] = $html_export['html'];
 		}
-		$parsed['html'] = $this->append_google_doc_images_if_missing($parsed['html'], $image_urls, $parsed['title']);
+		// Do not append images at the bottom. Only replace images where Google's
+		// HTML export exposes their original inline position.
 		if (!$parsed['title']) {
 			throw new AI_Article_Publisher_Error('Google Doc is missing a usable title.', 400);
 		}
@@ -2086,8 +2157,8 @@ final class AI_Article_Publisher
 	private function fetch_google_doc_html_export($document_id)
 	{
 		$candidates = array(
-			sprintf('https://docs.google.com/document/d/%s/mobilebasic', rawurlencode($document_id)),
 			sprintf('https://docs.google.com/document/d/%s/export?format=html', rawurlencode($document_id)),
+			sprintf('https://docs.google.com/document/d/%s/mobilebasic', rawurlencode($document_id)),
 		);
 
 		foreach ($candidates as $url) {
@@ -2101,10 +2172,13 @@ final class AI_Article_Publisher
 			if ($status_code < 200 || $status_code >= 300 || $this->is_google_access_wall($body, $final_url)) {
 				continue;
 			}
-			$html = $this->normalize_google_doc_html($body);
+			$html = $this->normalize_google_doc_html($body, $url);
 			return array(
 				'html' => $html,
-				'images' => $this->extract_image_items_from_html($body, $url),
+				'images' => $this->dedupe_google_doc_images(array_merge(
+					$this->extract_image_items_from_html($body, $url),
+					$this->extract_image_items_from_html($html, $url)
+				)),
 			);
 		}
 
@@ -2120,7 +2194,18 @@ final class AI_Article_Publisher
 
 		foreach ($matches[0] as $image_tag) {
 			$src = html_entity_decode(trim((string) $this->get_html_attribute($image_tag, 'src')), ENT_QUOTES, 'UTF-8');
-			if (!$src || 0 === strpos($src, 'data:')) {
+			if (!$src) {
+				continue;
+			}
+			$inline_image = $this->parse_inline_base64_image_source($src);
+			if (!empty($inline_image)) {
+				$images[] = array(
+					'url' => $src,
+					'altText' => sanitize_text_field($this->get_html_attribute($image_tag, 'alt')),
+					'title' => sanitize_text_field($this->get_html_attribute($image_tag, 'title')),
+					'imageBase64' => $inline_image['imageBase64'],
+					'mimeType' => $inline_image['mimeType'],
+				);
 				continue;
 			}
 			if (0 === strpos($src, '//')) {
@@ -2148,6 +2233,24 @@ final class AI_Article_Publisher
 		return '';
 	}
 
+	private function parse_inline_base64_image_source($src)
+	{
+		$src = trim((string) $src);
+		if (!preg_match('/^(?:data:)?(image\/[a-z0-9.+-]+);base64,([\s\S]+)$/i', $src, $matches)) {
+			return array();
+		}
+
+		$image_base64 = preg_replace('/\s+/', '', (string) $matches[2]);
+		if (!$image_base64 || false === base64_decode($image_base64, true)) {
+			return array();
+		}
+
+		return array(
+			'mimeType' => strtolower((string) $matches[1]),
+			'imageBase64' => $image_base64,
+		);
+	}
+
 	private function dedupe_google_doc_images($images)
 	{
 		$seen = array();
@@ -2162,7 +2265,7 @@ final class AI_Article_Publisher
 		return $deduped;
 	}
 
-	private function normalize_google_doc_html($html)
+	private function normalize_google_doc_html($html, $base_url)
 	{
 		$body = (string) $html;
 		if (preg_match('/<body[^>]*>([\s\S]*?)<\/body>/i', $body, $matches)) {
@@ -2172,36 +2275,529 @@ final class AI_Article_Publisher
 		$body = preg_replace('/<style\b[\s\S]*?<\/style>/i', '', $body);
 		$body = preg_replace('/<meta\b[^>]*>/i', '', $body);
 		$body = preg_replace('/<link\b[^>]*>/i', '', $body);
+		$body = $this->inline_google_doc_class_styles($body, $html);
 		$body = $this->strip_front_matter_from_html($body);
-		$body = preg_replace('/\s(class|style|id)="[^"]*"/i', '', $body);
-		$body = preg_replace('/<span\b[^>]*>([\s\S]*?)<\/span>/i', '$1', $body);
-		$body = preg_replace_callback(
-			'/<p>\s*(#{1,3})\s+([\s\S]*?)<\/p>/i',
-			function ($matches) {
-				$level = strlen($matches[1]);
-				return '<h' . $level . '>' . trim((string) $matches[2]) . '</h' . $level . '>';
+		$body = $this->remove_google_doc_metadata_blocks($body);
+		$body = $this->convert_inline_styled_headings($body);
+		$body = $this->absolutize_image_sources($body, $base_url);
+		$body = $this->normalize_google_doc_links($body, $base_url);
+		$body = $this->apply_google_doc_image_alignment($body);
+		$body = $this->make_google_doc_html_responsive($body);
+		$body = preg_replace('/<p\b[^>]*>\s*<\/p>/i', '', $body);
+		return $this->sanitize_google_doc_html_for_processing($body);
+	}
+
+	private function sanitize_google_doc_html_for_processing($html)
+	{
+		$allowed_protocols = array_values(array_unique(array_merge(wp_allowed_protocols(), array('data'))));
+		return trim((string) wp_kses((string) $html, wp_kses_allowed_html('post'), $allowed_protocols));
+	}
+
+	private function parse_google_doc_class_styles($html)
+	{
+		$class_styles = array();
+		if (!preg_match_all('/<style\b[^>]*>([\s\S]*?)<\/style>/i', (string) $html, $style_blocks)) {
+			return $class_styles;
+		}
+
+		foreach ($style_blocks[1] as $css) {
+			if (!preg_match_all('/([^{}]+)\{([^{}]*)\}/', (string) $css, $rules, PREG_SET_ORDER)) {
+				continue;
+			}
+			foreach ($rules as $rule) {
+				if (!preg_match_all('/\.([a-zA-Z0-9_-]+)/', (string) $rule[1], $class_matches)) {
+					continue;
+				}
+				$declarations = trim((string) $rule[2]);
+				$declarations = rtrim($declarations, ';');
+				if (!$declarations) {
+					continue;
+				}
+				foreach ($class_matches[1] as $class_name) {
+					$class_styles[$class_name] = !empty($class_styles[$class_name])
+						? $class_styles[$class_name] . '; ' . $declarations
+						: $declarations;
+				}
+			}
+		}
+
+		return $class_styles;
+	}
+
+	private function merge_style_attributes($existing_style, $class_style)
+	{
+		$existing = rtrim(trim((string) $existing_style), ';');
+		$from_class = rtrim(trim((string) $class_style), ';');
+		if (!$existing) {
+			return $from_class;
+		}
+		if (!$from_class) {
+			return $existing;
+		}
+		return $from_class . '; ' . $existing;
+	}
+
+	private function inline_google_doc_class_styles($body_html, $source_html)
+	{
+		$class_styles = $this->parse_google_doc_class_styles($source_html);
+		if (empty($class_styles)) {
+			return (string) $body_html;
+		}
+
+		return preg_replace_callback(
+			'/<([a-z][a-z0-9]*)\b([^>]*)>/i',
+			function ($matches) use ($class_styles) {
+				$tag = (string) $matches[0];
+				$name = (string) $matches[1];
+				$attrs = (string) $matches[2];
+				$class_value = $this->get_html_attribute($tag, 'class');
+				if (!$class_value) {
+					return $tag;
+				}
+
+				$merged_class_style = array();
+				foreach (preg_split('/\s+/', $class_value) as $class_name) {
+					if (!empty($class_styles[$class_name])) {
+						$merged_class_style[] = $class_styles[$class_name];
+					}
+				}
+				if (empty($merged_class_style)) {
+					return $tag;
+				}
+
+				$existing_style = $this->get_html_attribute($tag, 'style');
+				$merged_style = $this->merge_style_attributes($existing_style, implode('; ', $merged_class_style));
+				if (preg_match('/\bstyle\s*=/i', $attrs)) {
+					return preg_replace('/\bstyle\s*=\s*([\'"])(.*?)\1/i', 'style="' . esc_attr($merged_style) . '"', $tag, 1);
+				}
+				return '<' . $name . $attrs . ' style="' . esc_attr($merged_style) . '">';
 			},
-			$body
+			(string) $body_html
 		);
-		$body = preg_replace('/<p>\s*<\/p>/i', '', $body);
-		return trim((string) wp_kses_post($body));
+	}
+
+	private function absolutize_image_sources($html, $base_url)
+	{
+		return preg_replace_callback(
+			'/<img\b[^>]*>/i',
+			function ($matches) use ($base_url) {
+				$image_tag = $matches[0];
+				$src = $this->get_html_attribute($image_tag, 'src');
+				if (!$src || !empty($this->parse_inline_base64_image_source($src))) {
+					return $image_tag;
+				}
+				if (0 === strpos($src, '//')) {
+					$src = 'https:' . $src;
+				} elseif (!preg_match('/^https?:\/\//i', $src)) {
+					$src = $this->resolve_url($src, $base_url);
+				}
+				if (!$src) {
+					return $image_tag;
+				}
+				if (preg_match('/\bsrc\s*=/i', $image_tag)) {
+					return preg_replace('/\bsrc\s*=\s*([\'"])(.*?)\1/i', 'src="' . esc_url($src) . '"', $image_tag, 1);
+				}
+				return preg_replace('/\s*\/?>$/', ' src="' . esc_url($src) . '" />', $image_tag, 1);
+			},
+			(string) $html
+		);
+	}
+
+	private function normalize_google_doc_links($html, $base_url)
+	{
+		return preg_replace_callback(
+			'/<a\b[^>]*>/i',
+			function ($matches) use ($base_url) {
+				$anchor_tag = $matches[0];
+				$href = $this->get_html_attribute($anchor_tag, 'href');
+				if (!$href) {
+					return $anchor_tag;
+				}
+
+				$href = $this->unwrap_google_redirect_url($href);
+				if (0 === strpos($href, '//')) {
+					$href = 'https:' . $href;
+				} elseif ('#' !== substr($href, 0, 1) && !preg_match('/^[a-z][a-z0-9+.-]*:/i', $href)) {
+					$href = $this->resolve_url($href, $base_url);
+				}
+				if (!$href) {
+					return $anchor_tag;
+				}
+
+				if (preg_match('/\bhref\s*=/i', $anchor_tag)) {
+					$anchor_tag = preg_replace('/\bhref\s*=\s*([\'"])(.*?)\1/i', 'href="' . esc_url($href) . '"', $anchor_tag, 1);
+				} else {
+					$anchor_tag = preg_replace('/>$/', ' href="' . esc_url($href) . '">', $anchor_tag, 1);
+				}
+
+				if ('#' !== substr($href, 0, 1)) {
+					$anchor_tag = $this->set_anchor_attribute($anchor_tag, 'target', '_blank');
+					$anchor_tag = $this->set_anchor_attribute($anchor_tag, 'rel', 'noopener noreferrer');
+				}
+				return $anchor_tag;
+			},
+			(string) $html
+		);
+	}
+
+	private function open_links_in_new_tabs($html)
+	{
+		return preg_replace_callback(
+			'/<a\b[^>]*>/i',
+			function ($matches) {
+				$anchor_tag = $matches[0];
+				$href = $this->get_html_attribute($anchor_tag, 'href');
+				if (!$href || '#' === substr($href, 0, 1)) {
+					return $anchor_tag;
+				}
+				$anchor_tag = $this->set_anchor_attribute($anchor_tag, 'target', '_blank');
+				return $this->set_anchor_attribute($anchor_tag, 'rel', 'noopener noreferrer');
+			},
+			(string) $html
+		);
+	}
+
+	private function make_google_doc_html_responsive($html)
+	{
+		$html = preg_replace_callback(
+			'/<([a-z][a-z0-9]*)\b([^>]*)>/i',
+			function ($matches) {
+				$tag_name = strtolower((string) $matches[1]);
+				$tag = (string) $matches[0];
+				$existing_class = $this->get_html_attribute($tag, 'class');
+				$tag = preg_replace('/\s*\bclass\s*=\s*([\'"])(.*?)\1/i', '', $tag);
+				if (!preg_match('/^h[1-6]$/', $tag_name)) {
+					$tag = preg_replace('/\s*\bid\s*=\s*([\'"])(.*?)\1/i', '', $tag);
+				}
+				$style = $this->get_html_attribute($tag, 'style');
+				if ('' !== $style) {
+					$clean_style = $this->normalize_google_doc_style_attribute($style, $tag_name);
+					if ('' !== $clean_style) {
+						$tag = preg_replace('/\bstyle\s*=\s*([\'"])(.*?)\1/i', 'style="' . esc_attr($clean_style) . '"', $tag, 1);
+					} else {
+						$tag = preg_replace('/\s*\bstyle\s*=\s*([\'"])(.*?)\1/i', '', $tag, 1);
+					}
+				}
+
+				if ('img' === $tag_name) {
+					$alignment = $this->extract_alignment_from_class($existing_class);
+					if ($alignment) {
+						$tag = $this->set_html_class($tag, 'align' . $alignment);
+					}
+					$tag = $this->set_image_attribute($tag, 'style', $this->build_responsive_image_style($alignment));
+					$tag = preg_replace('/\s*\bwidth\s*=\s*([\'"])(.*?)\1/i', '', $tag);
+					$tag = preg_replace('/\s*\bheight\s*=\s*([\'"])(.*?)\1/i', '', $tag);
+				}
+
+				return $tag;
+			},
+			(string) $html
+		);
+
+		return (string) $html;
+	}
+
+	private function apply_google_doc_image_alignment($html)
+	{
+		return preg_replace_callback(
+			'/<p\b[^>]*>[\s\S]*?<\/p>/i',
+			function ($matches) {
+				$paragraph = (string) $matches[0];
+				if (false === stripos($paragraph, '<img')) {
+					return $paragraph;
+				}
+				$alignment = $this->detect_google_doc_block_alignment($paragraph);
+				if (!$alignment) {
+					return $paragraph;
+				}
+
+				return preg_replace_callback(
+					'/<img\b[^>]*>/i',
+					function ($image_matches) use ($alignment) {
+						return $this->set_html_class($image_matches[0], 'align' . $alignment);
+					},
+					$paragraph
+				);
+			},
+			(string) $html
+		);
+	}
+
+	private function detect_google_doc_block_alignment($html)
+	{
+		$alignment = $this->extract_alignment_from_class($this->get_html_attribute($html, 'class'));
+		if ($alignment) {
+			return $alignment;
+		}
+
+		$style = $this->get_html_attribute($html, 'style');
+		if (preg_match('/float\s*:\s*(left|right)/i', $style, $matches)) {
+			return strtolower((string) $matches[1]);
+		}
+		if (preg_match('/text-align\s*:\s*(right|center)/i', $style, $matches)) {
+			return strtolower((string) $matches[1]);
+		}
+
+		if (
+			preg_match(
+				'/<(?:span|img)\b[^>]*\bstyle\s*=\s*([\'"])(.*?)\1/i',
+				(string) $html,
+				$matches
+			)
+			&& preg_match('/float\s*:\s*(left|right)/i', (string) $matches[2], $style_matches)
+		) {
+			return strtolower((string) $style_matches[1]);
+		}
+		if (
+			preg_match(
+				'/<(?:span|img)\b[^>]*\bstyle\s*=\s*([\'"])(.*?)\1/i',
+				(string) $html,
+				$matches
+			)
+			&& preg_match(
+				'/text-align\s*:\s*(right|center)/i',
+				(string) $matches[2],
+				$style_matches
+			)
+		) {
+			return strtolower((string) $style_matches[1]);
+		}
+
+		return '';
+	}
+
+	private function extract_alignment_from_class($class_value)
+	{
+		if (preg_match(
+			'/(?:^|\s)align(left|right|center)(?:\s|$)/i',
+			(string) $class_value,
+			$matches
+		)) {
+			return strtolower((string) $matches[1]);
+		}
+		return '';
+	}
+
+	private function build_responsive_image_style($alignment)
+	{
+		$style = 'max-width:100%;height:auto;';
+		if ('right' === $alignment) {
+			return $style . 'float:right;margin:0 0 1em 1.5em;';
+		}
+		if ('left' === $alignment) {
+			return $style . 'float:left;margin:0 1.5em 1em 0;';
+		}
+		if ('center' === $alignment) {
+			return $style . 'display:block;margin-left:auto;margin-right:auto;';
+		}
+		return $style;
+	}
+
+	private function normalize_google_doc_style_attribute($style, $tag_name)
+	{
+		$blocked = array(
+			'display',
+			'white-space',
+			'margin',
+			'margin-left',
+			'margin-right',
+			'padding',
+			'padding-left',
+			'padding-right',
+			'width',
+			'height',
+			'min-width',
+			'max-width',
+			'min-height',
+			'max-height',
+			'overflow',
+			'transform',
+			'-webkit-transform',
+			'list-style-type',
+		);
+		$allowed_by_tag = array(
+			'a' => array('color', 'text-decoration'),
+			'span' => array('color', 'font-weight', 'font-style', 'text-decoration'),
+			'strong' => array('font-weight'),
+			'em' => array('font-style'),
+			'p' => array('text-align'),
+			'h1' => array('text-align'),
+			'h2' => array('text-align'),
+			'h3' => array('text-align'),
+			'h4' => array('text-align'),
+			'h5' => array('text-align'),
+			'h6' => array('text-align'),
+		);
+		$allowed = array();
+		foreach (explode(';', (string) $style) as $declaration) {
+			$declaration = trim((string) $declaration);
+			if ('' === $declaration || false === strpos($declaration, ':')) {
+				continue;
+			}
+			list($property, $value) = array_map('trim', explode(':', $declaration, 2));
+			$property = strtolower((string) $property);
+			if (in_array($property, $blocked, true)) {
+				continue;
+			}
+			if (empty($allowed_by_tag[$tag_name]) || !in_array(
+				$property,
+				$allowed_by_tag[$tag_name],
+				true
+			)) {
+				continue;
+			}
+			$allowed[] = $property . ':' . $value;
+		}
+		return implode(';', $allowed);
+	}
+
+	private function unwrap_google_redirect_url($url)
+	{
+		$url = html_entity_decode(trim((string) $url), ENT_QUOTES, 'UTF-8');
+		$parts = wp_parse_url($url);
+		$host = isset($parts['host']) ? strtolower((string) $parts['host']) : '';
+		$path = isset($parts['path']) ? (string) $parts['path'] : '';
+		if (
+			!$host || !preg_match('/(^|\.)google\.[a-z.]+$/i', $host) || '/url' !== $path ||
+			empty($parts['query'])
+		) {
+			return $url;
+		}
+
+		$query = array();
+		wp_parse_str((string) $parts['query'], $query);
+		foreach (array('q', 'url') as $key) {
+			if (!empty($query[$key]) && is_string($query[$key])) {
+				return trim((string) $query[$key]);
+			}
+		}
+		return $url;
+	}
+
+	private function convert_inline_styled_headings($html)
+	{
+		return preg_replace_callback(
+			'/<p\b([^>]*)>([\s\S]*?)<\/p>/i',
+			function ($matches) {
+				$attrs = (string) $matches[1];
+				$inner = (string) $matches[2];
+				$text = $this->normalize_meta_text($this->strip_html_text($inner));
+				if (preg_match('/^(#{1,3})\s+(.+)$/', $text, $heading_match)) {
+					$level = strlen($heading_match[1]);
+					$clean_inner = preg_replace('/^(\s*<[^>]+>)*\s*#{1,3}\s*/i', '', $inner, 1);
+					return $this->build_google_doc_heading_tag(
+						$level,
+						$attrs,
+						$clean_inner
+					);
+				}
+				$style_text = $attrs . ' '
+					. $inner;
+				$class_value = $this->get_html_attribute(
+					'<p' . $attrs . '>',
+					'class'
+				);
+				if (preg_match('/(^|\s)title(\s|$)/i', $class_value)) {
+					return
+						$this->build_google_doc_heading_tag(1, $attrs, $inner);
+				}
+				if (preg_match('/(^|\s)subtitle(\s|$)/i', $class_value)) {
+					return $this->build_google_doc_heading_tag(2, $attrs, $inner);
+				}
+				if (!preg_match(
+					'/font-size\s*:\s*([0-9.]+)\s*(pt|px)/i',
+					$style_text,
+					$size_match
+				)) {
+					return
+						$matches[0];
+				}
+				$size = (float) $size_match[1];
+				$size_px = ('pt' === strtolower($size_match[2])) ? $size *
+					1.333 : $size;
+				$is_bold = (bool) preg_match(
+					'/font-weight\s*:\s*(bold|[6-9]00)|<b\b|<strong\b /i',
+					$style_text
+				);
+				if ($size_px >= 31) {
+					return $this->build_google_doc_heading_tag(1, $attrs, $inner);
+				}
+				if ($size_px >= 23) {
+					return $this->build_google_doc_heading_tag(2, $attrs, $inner);
+				}
+				if ($size_px >= 18) {
+					return $this->build_google_doc_heading_tag(3, $attrs, $inner);
+				}
+				if ($size_px >= 15 && $is_bold) {
+					return $this->build_google_doc_heading_tag(4, $attrs, $inner);
+				}
+				return $matches[0];
+			},
+			(string) $html
+		);
+	}
+
+	private function build_google_doc_heading_tag(
+		$level,
+		$attrs,
+		$inner
+	) {
+		$level = min(max((int) $level, 1), 6);
+		return '<h' . $level . $this->preserve_google_doc_block_attrs($attrs) . '>' .
+			trim((string) $inner) . '</h' . $level . '>';
+	}
+	private
+	function preserve_google_doc_block_attrs($attrs)
+	{
+		$source_tag = '<p' . (string) $attrs . '>';
+		$output = '';
+		foreach (
+			array('id', 'class', 'style', 'dir') as
+			$attribute
+		) {
+			$value = $this->get_html_attribute(
+				$source_tag,
+				$attribute
+			);
+			if ('' !== $value) {
+				$output .= ' ' . $attribute . '="' . esc_attr($value) . '"';
+			}
+		}
+		return $output;
 	}
 
 	private function strip_front_matter_from_html($html)
 	{
 		$output = trim((string) $html);
-		$output = preg_replace('/^\s*<[^>]+>\s*---\s*<\/[^>]+>\s*/i', '', $output, 1);
+		$output = preg_replace(
+			'/^\s*<[^>]+>\s*---\s*<\/[^>]+>\s*/i',
+			'',
+			$output,
+			1
+		);
 		$guard = 0;
-		while ($guard < 40 && preg_match('/^\s*<([a-z0-9]+)\b[^>]*>([\s\S]*?)<\/\1>\s*/i', $output, $matches)) {
+		while (
+			$guard < 40 &&
+			preg_match(
+				'/^\s*<([a-z0-9]+)\b[^>]*>([\s\S]*?)<\/\1>\s*/i',
+				$output,
+				$matches
+			)
+		) {
 			$text = $this->normalize_meta_text($this->strip_html_text($matches[2]));
 			if ('---' === $text) {
 				$output = substr($output, strlen($matches[0]));
 				break;
 			}
-			if (!preg_match('/^([^:]{1,60}):\s*(.*)$/', $text, $metadata_match)) {
+			if (!preg_match(
+				'/^([^:]{1,60}):\s*(.*)$/',
+				$text,
+				$metadata_match
+			)) {
 				break;
 			}
-			$key = $this->normalize_metadata_key($metadata_match[1]);
+			$key =
+				$this->normalize_metadata_key($metadata_match[1]);
 			if (!$this->is_allowed_metadata_key($key)) {
 				break;
 			}
@@ -2211,33 +2807,113 @@ final class AI_Article_Publisher
 		return trim($output);
 	}
 
-	private function has_useful_google_doc_html($html)
+	private function
+	remove_google_doc_metadata_blocks($html)
 	{
-		return (bool) trim($this->strip_html_text($html)) || preg_match('/<img\b/i', (string) $html);
+		return preg_replace_callback(
+			'/<p\b[^>]*>([\s\S]*?)<\/p>/i',
+			function ($matches) {
+				$text =
+					$this->normalize_meta_text($this->strip_html_text($matches[1]));
+				if (!preg_match(
+					'/^([^:]{1,60}):\s*(.*)$/',
+					$text,
+					$metadata_match
+				)) {
+					return $matches[0];
+				}
+				$key =
+					$this->normalize_metadata_key($metadata_match[1]);
+				return $this->is_allowed_metadata_key($key)
+					? '' : $matches[0];
+			},
+			(string) $html
+		);
 	}
 
-	private function resolve_url($path, $base_url)
+	private function
+	has_useful_google_doc_html($html)
 	{
+		return (bool)
+		trim($this->strip_html_text($html)) ||
+			preg_match('/<img\b/i', (string) $html);
+	}
+	private function
+	has_publishable_post_content($html)
+	{
+		$text = trim($this->strip_html_text($html));
+		if (strlen($text) >= 80) {
+			return true;
+		}
+		return (bool) preg_match('/<(h[1-6]|p|ul|ol|figure|img)\b/i', (string) $html);
+	}
+	private function
+	is_google_doc_html_export_complete(
+		$html,
+		$fallback_html
+	) {
+		if (!$this->has_useful_google_doc_html($html)) {
+			return false;
+		}
+
+		$html_text_length =
+			strlen($this->strip_html_text($html));
+		$fallback_text_length =
+			strlen($this->strip_html_text($fallback_html));
+		if ($fallback_text_length <= 0) {
+			return
+				true;
+		}
+		return $html_text_length >=
+			max(80, (int)
+			floor($fallback_text_length * 0.6));
+	}
+	private function resolve_url(
+		$path,
+		$base_url
+	) {
 		if (!$path) {
 			return '';
 		}
 		$base = wp_parse_url($base_url);
-		if (empty($base['scheme']) || empty($base['host'])) {
+		if (
+			empty($base['scheme']) ||
+			empty($base['host'])
+		) {
 			return '';
 		}
-		if ('/' === substr($path, 0, 1)) {
-			return $base['scheme'] . '://' . $base['host'] . $path;
+		if ('/' === substr(
+			$path,
+			0,
+			1
+		)) {
+			return $base['scheme'] . '://' .
+				$base['host'] .
+				$path;
 		}
-		$base_path = isset($base['path']) ? preg_replace('/\/[^\/]*$/', '/', $base['path']) : '/';
-		return $base['scheme'] . '://' . $base['host'] . $base_path . $path;
+		$base_path = isset($base['path']) ?
+			preg_replace(
+				'/\/[^\/]*$/',
+				'/',
+				$base['path']
+			) : '/';
+		return
+			$base['scheme'] . '://' .
+			$base['host'] . $base_path . $path;
 	}
-
-	private function append_google_doc_images_if_missing($html, $image_urls, $title)
-	{
-		if (empty($image_urls) || preg_match('/<img\b/i', (string) $html)) {
+	private function
+	append_google_doc_images_if_missing(
+		$html,
+		$image_urls,
+		$title
+	) {
+		if (
+			empty($image_urls) ||
+			preg_match('/<img\b/i', (string)
+			$html)
+		) {
 			return $html;
 		}
-
 		$figures = array();
 		foreach ($image_urls as $url) {
 			$figures[] = sprintf(
@@ -2246,143 +2922,688 @@ final class AI_Article_Publisher
 				esc_attr($title)
 			);
 		}
-
-		return trim((string) $html) . "\n" . implode("\n", $figures);
+		return
+			trim((string) $html) . "\n" .
+			implode("\n", $figures);
 	}
-
-	private function replace_image_sources($html, $replacements)
-	{
+	private function
+	replace_image_sources(
+		$html,
+		$replacements
+	) {
 		$updated = (string) $html;
-		if (empty($replacements) || !is_array($replacements)) {
+		if (
+			empty($replacements) ||
+			!is_array($replacements)
+		) {
 			return $updated;
 		}
-
+		$replacement_lookup = array();
+		foreach (
+			$replacements as
+			$source_url => $replacement
+		) {
+			$replacement_lookup[(string)
+			$source_url] = $replacement;
+			$replacement_lookup[$this->normalize_image_source_key((string)
+			$source_url)] = $replacement;
+		}
 		return preg_replace_callback(
 			'/<img\b[^>]*>/i',
-			function ($matches) use ($replacements) {
+			function ($matches)
+			use ($replacement_lookup) {
 				$image_tag = $matches[0];
-				$src = $this->get_html_attribute($image_tag, 'src');
-				if (!$src || empty($replacements[$src])) {
-					$decoded_src = html_entity_decode((string) $src, ENT_QUOTES, 'UTF-8');
-					if (!$decoded_src || empty($replacements[$decoded_src])) {
-						return $image_tag;
-					}
-					$src = $decoded_src;
+				$src =
+					$this->get_html_attribute(
+						$image_tag,
+						'src'
+					);
+				$src_key =
+					$this->normalize_image_source_key((string)
+					$src);
+				if (
+					!$src ||
+					empty($replacement_lookup[$src])
+					&&
+					empty($replacement_lookup[$src_key])
+				) {
+					return $image_tag;
 				}
 
-				$replacement = $replacements[$src];
-				$updated = preg_replace('/\bsrc\s*=\s*([\'"])(.*?)\1/i', 'src="' . esc_url($replacement['sourceUrl']) . '"', $image_tag, 1);
-				$updated = $this->set_image_attribute($updated, 'alt', isset($replacement['altText']) ? $replacement['altText'] : '');
-				$updated = $this->set_image_attribute($updated, 'title', isset($replacement['title']) ? $replacement['title'] : '');
+				$replacement =
+					!empty($replacement_lookup[$src])
+					? $replacement_lookup[$src]
+					:
+					$replacement_lookup[$src_key];
+				$updated = preg_replace(
+					'/\bsrc\s*=\s*([\'"])(.*?)\1/i',
+					'src="' .
+						esc_url($replacement['sourceUrl'])
+						. '"',
+					$image_tag,
+					1
+				);
+				$updated =
+					$this->set_image_attribute(
+						$updated,
+						'alt',
+						isset($replacement['altText'])
+							? $replacement['altText'] :
+							''
+					);
+				$updated =
+					$this->set_image_attribute(
+						$updated,
+						'title',
+						isset($replacement['title'])
+							? $replacement['title'] : ''
+					);
 				return $updated;
 			},
 			$updated
 		);
 	}
 
-	private function set_image_attribute($image_tag, $attribute, $value)
-	{
-		$value = esc_attr((string) $value);
-		if (preg_match('/\b' . preg_quote($attribute, '/') . '\s*=/i', $image_tag)) {
-			return preg_replace('/\b' . preg_quote($attribute, '/') . '\s*=\s*([\'"])(.*?)\1/i', $attribute . '="' . $value . '"', $image_tag, 1);
+	private function
+	remove_image_source_from_html(
+		$html,
+		$image_url
+	) {
+		$image_url = trim((string)
+		$image_url);
+		if (!$image_url) {
+			return (string) $html;
 		}
-		return preg_replace('/\s*\/?>$/', ' ' . $attribute . '="' . $value . '" />', $image_tag, 1);
+
+		$updated = (string) $html;
+		$quoted_url =
+			preg_quote($image_url, '/');
+		foreach (
+			array(
+				'figure',
+				'p'
+			) as $tag_name
+		) {
+			$updated =
+				preg_replace_callback(
+					'/<' . $tag_name
+						. '\b[^>]*>[\s\S]*?<\/'
+						. $tag_name . '>/i',
+					function ($matches) use ($quoted_url) {
+						if (!preg_match(
+							'/<img\b[^>
+                                                                                                ]*\bsrc\s*=\s*([\'"])' .
+								$quoted_url . '\1/i',
+							$matches[0]
+						)) {
+							return $matches[0];
+						}
+						$text_without_images =
+							preg_replace(
+								'/<img\b[^>]*>/i',
+								'',
+								$matches[0]
+							);
+						return '' ===
+							trim($this->strip_html_text($text_without_images))
+							?
+							'' :
+							$text_without_images;
+					},
+					$updated
+				);
+		}
+
+		$updated =
+			preg_replace(
+				'/
+                                                                                                    <img\b[^>
+                                                                                                        ]*\bsrc\s*=\s*([\'"])'
+					. $quoted_url .
+					'\1[^>]*>/i',
+				'',
+				$updated
+			);
+		$updated =
+			preg_replace(
+				'/
+                                                                                                        <p\b[^>]*>\s*<\
+                                                                                                                /p>/i',
+				'',
+				$updated
+			);
+		return
+			trim((string)
+			$updated);
 	}
 
-	private function parse_google_doc_markdown($markdown, $fallback_title)
+	private
+	function
+	normalize_image_source_key($value)
 	{
-		$front_matter = $this->parse_front_matter($markdown);
-		$metadata_source = !empty($front_matter) ? $front_matter : $this->parse_leading_metadata($markdown);
-		$metadata = $metadata_source['metadata'];
-		$body = trim((string) preg_replace('/^#{1,6}\s+content\s*$/im', '', (string) $metadata_source['body']));
-		$title = $this->pick_metadata($metadata, array('title'));
+		$decoded
+			=
+			html_entity_decode(
+				trim((string)
+				$value),
+				ENT_QUOTES,
+				'UTF-8'
+			);
+		$decoded
+			=
+			str_replace(
+				'&#38;',
+				'&',
+				$decoded
+			);
+		$decoded
+			=
+			preg_replace(
+				'/^data:(image\/[a-z0-9.+-]+;base64,)/i',
+				'$1',
+				$decoded
+			);
+		return
+			rawurldecode($decoded);
+	}
 
-		if (!$title && preg_match('/^#\s+(.+)$/m', $body, $matches)) {
-			$title = trim((string) $matches[1]);
-			$body = trim((string) preg_replace('/^#\s+.+\n*/m', '', $body, 1));
+	private
+	function
+	set_image_attribute(
+		$image_tag,
+		$attribute,
+		$value
+	) {
+		$value =
+			esc_attr((string)
+			$value);
+		if (preg_match(
+			'/\b' .
+				preg_quote(
+					$attribute,
+					'/'
+				) .
+				'\s*=/i',
+			$image_tag
+		)) {
+			return
+				preg_replace(
+					'/\b' .
+						preg_quote(
+							$attribute,
+							'/'
+						) .
+						'\s*=\s*([\'"])(.*?)\1/i',
+					$attribute
+						. '="' .
+						$value .
+						'"',
+					$image_tag,
+					1
+				);
+		}
+		return
+			preg_replace(
+				'/\s*\/?>$/',
+				' ' .
+					$attribute
+					. '="' .
+					$value .
+					'"
+                                                                                                                />',
+				$image_tag,
+				1
+			);
+	}
+
+	private
+	function
+	set_html_class(
+		$tag,
+		$class_name
+	) {
+		$class_name
+			=
+			sanitize_html_class((string)
+			$class_name);
+		if (!$class_name) {
+			return
+				(string)
+				$tag;
+		}
+
+		$existing
+			=
+			$this->get_html_attribute(
+				$tag,
+				'class'
+			);
+		$classes
+			=
+			$existing
+			?
+			preg_split(
+				'/\s+/',
+				trim((string)
+				$existing)
+			)
+			:
+			array();
+		if (!is_array($classes)) {
+			$classes
+				=
+				array();
+		}
+		$classes[]
+			=
+			$class_name;
+		$classes
+			=
+			array_values(array_unique(array_filter(array_map(
+				'sanitize_html_class',
+				$classes
+			))));
+		$class_attr
+			=
+			implode(
+				'
+                                                                                                                ',
+				$classes
+			);
+
+		if (preg_match(
+			'/\bclass\s*=/i',
+			(string)
+			$tag
+		)) {
+			return
+				preg_replace(
+					'/\bclass\s*=\s*([\'"])(.*?)\1/i',
+					'class="'
+						.
+						esc_attr($class_attr)
+						. '"',
+					(string)
+					$tag,
+					1
+				);
+		}
+
+		return
+			preg_replace(
+				'/\s*\/?>$/',
+				'
+                                                                                                                class="'
+					.
+					esc_attr($class_attr)
+					. '"
+                                                                                                                />',
+				(string)
+				$tag,
+				1
+			);
+	}
+
+	private
+	function
+	parse_google_doc_markdown(
+		$markdown,
+		$fallback_title
+	) {
+		$front_matter
+			=
+			$this->parse_front_matter($markdown);
+		$metadata_source
+			=
+			!empty($front_matter)
+			?
+			$front_matter
+			:
+			$this->parse_leading_metadata($markdown);
+		$metadata
+			=
+			$metadata_source['metadata'];
+		$body =
+			trim((string)
+			preg_replace(
+				'/^#{1,6}\s+content\s*$/im',
+				'',
+				(string)
+				$metadata_source['body']
+			));
+		$title =
+			$this->pick_metadata(
+				$metadata,
+				array('title')
+			);
+
+		if (
+			!$title
+			&&
+			preg_match(
+				'/^#\s+(.+)$/m',
+				$body,
+				$matches
+			)
+		) {
+			$title =
+				trim((string)
+				$matches[1]);
+			$body =
+				trim((string)
+				preg_replace(
+					'/^#\s+.+\n*/m',
+					'',
+					$body,
+					1
+				));
 		}
 		if (!$title) {
-			$lines = preg_split('/\r?\n/', $body);
+			$lines =
+				preg_split(
+					'/\r?\n/',
+					$body
+				);
 			if (is_array($lines)) {
-				foreach ($lines as $line) {
-					$line = trim((string) $line);
+				foreach (
+					$lines
+					as
+					$line
+				) {
+					$line =
+						trim((string)
+						$line);
 					if ($line) {
-						$title = $line;
-						$body = trim((string) preg_replace('/^' . preg_quote($line, '/') . '\s*/', '', $body, 1));
+						$title =
+							$line;
+						$body =
+							trim((string)
+							preg_replace(
+								'/^' .
+									preg_quote(
+										$line,
+										'/'
+									) .
+									'\s*/',
+								'',
+								$body,
+								1
+							));
 						break;
 					}
 				}
 			}
 		}
 
-		$title = $title ? $title : $fallback_title;
-		$html = $this->markdown_to_html($body);
-		$excerpt = $this->pick_metadata($metadata, array('excerpt'));
-		$brief = $this->pick_metadata($metadata, array('brief', 'image_prompt', 'featured_image_prompt', 'prompt'));
+		$title =
+			$title ?
+			$title :
+			$fallback_title;
+		$html =
+			$this->markdown_to_html($body);
+		$excerpt
+			=
+			$this->pick_metadata(
+				$metadata,
+				array('excerpt')
+			);
+		$brief =
+			$this->pick_metadata(
+				$metadata,
+				array(
+					'brief',
+					'image_prompt',
+					'featured_image_prompt',
+					'prompt'
+				)
+			);
 		if (!$brief) {
-			$brief = $excerpt ? $excerpt : $this->truncate($this->strip_html_text($html), 240);
+			$brief =
+				$excerpt
+				?
+				$excerpt
+				:
+				$this->truncate(
+					$this->strip_html_text($html),
+					240
+				);
 		}
 		if (!$brief) {
-			$brief = $title;
+			$brief =
+				$title;
 		}
 
-		return array(
-			'title' => $title,
-			'slug' => $this->slugify($this->pick_metadata($metadata, array('slug')) ? $this->pick_metadata($metadata, array('slug')) : $title),
-			'html' => trim((string) $html),
-			'excerpt' => $excerpt,
-			'brief' => $brief,
-			'categories' => $this->sanitize_csv_strings($this->pick_metadata($metadata, array('categories', 'category'))),
-			'tags' => $this->sanitize_csv_strings($this->pick_metadata($metadata, array('tags', 'tag'))),
-			'seoTitle' => $this->pick_metadata($metadata, array('seo_title', 'meta_title')),
-			'metaDescription' => $this->pick_metadata($metadata, array('meta_description', 'seo_description')),
-			'focusKeyword' => $this->pick_metadata($metadata, array('focus_keyword')),
-			'canonicalUrl' => $this->sanitize_optional_url($this->pick_metadata($metadata, array('canonical_url'))),
-			'featuredImageUrl' => $this->sanitize_optional_url($this->pick_metadata($metadata, array('featured_image_url', 'image_url'))),
-			'imagePrompt' => $this->pick_metadata($metadata, array('image_prompt', 'featured_image_prompt', 'prompt')),
-		);
+		return
+			array(
+				'title'
+				=>
+				$title,
+				'slug'
+				=>
+				$this->slugify_metadata_value($this->pick_metadata(
+					$metadata,
+					array(
+						'slug',
+						'url',
+						'permalink'
+					)
+				) ?
+					$this->pick_metadata(
+						$metadata,
+						array(
+							'slug',
+							'url',
+							'permalink'
+						)
+					) :
+					$title),
+				'html'
+				=>
+				trim((string)
+				$html),
+				'excerpt'
+				=>
+				$excerpt,
+				'brief'
+				=>
+				$brief,
+				'categories'
+				=>
+				$this->sanitize_csv_strings($this->pick_metadata(
+					$metadata,
+					array(
+						'categories',
+						'category'
+					)
+				)),
+				'tags'
+				=>
+				$this->sanitize_csv_strings($this->pick_metadata(
+					$metadata,
+					array(
+						'tags',
+						'tag'
+					)
+				)),
+				'seoTitle'
+				=>
+				$this->pick_metadata(
+					$metadata,
+					array(
+						'seo_title',
+						'meta_title'
+					)
+				),
+				'metaDescription'
+				=>
+				$this->pick_metadata(
+					$metadata,
+					array(
+						'meta_description',
+						'seo_description'
+					)
+				),
+				'focusKeyword'
+				=>
+				$this->pick_metadata(
+					$metadata,
+					array('focus_keyword')
+				),
+				'canonicalUrl'
+				=>
+				$this->sanitize_optional_url($this->pick_metadata(
+					$metadata,
+					array('canonical_url')
+				)),
+				'featuredImageUrl'
+				=>
+				$this->sanitize_optional_image_url($this->pick_metadata(
+					$metadata,
+					array(
+						'featured_image_url',
+						'featured_image',
+						'image_url'
+					)
+				)),
+				'imagePrompt'
+				=>
+				$this->pick_metadata(
+					$metadata,
+					array(
+						'image_prompt',
+						'featured_image_prompt',
+						'prompt'
+					)
+				),
+			);
 	}
 
-	private function parse_front_matter($markdown)
+	private
+	function
+	parse_front_matter($markdown)
 	{
-		$normalized = preg_replace('/^\xEF\xBB\xBF/', '', (string) $markdown);
-		if (0 !== strpos($normalized, "---\n")) {
-			return array();
+		$normalized
+			=
+			preg_replace(
+				'/^\xEF\xBB\xBF/',
+				'',
+				(string)
+				$markdown
+			);
+		if (
+			0
+			!==
+			strpos(
+				$normalized,
+				"---\n"
+			)
+		) {
+			return
+				array();
 		}
-		$end_index = strpos($normalized, "\n---\n", 4);
-		if (false === $end_index) {
-			return array();
+		$end_index
+			=
+			strpos(
+				$normalized,
+				"\n---\n",
+				4
+			);
+		if (
+			false
+			===
+			$end_index
+		) {
+			return
+				array();
 		}
 
-		$raw_metadata = substr($normalized, 4, $end_index - 4);
-		$metadata = array();
-		$lines = preg_split('/\r?\n/', $raw_metadata);
+		$raw_metadata
+			=
+			substr(
+				$normalized,
+				4,
+				$end_index
+					- 4
+			);
+		$metadata
+			=
+			array();
+		$lines =
+			preg_split(
+				'/\r?\n/',
+				$raw_metadata
+			);
 		if (is_array($lines)) {
-			foreach ($lines as $line) {
-				if (preg_match('/^([^:]+):\s*(.*)$/', $line, $matches)) {
-					$key = $this->normalize_metadata_key($matches[1]);
+			foreach (
+				$lines
+				as
+				$line
+			) {
+				if (preg_match(
+					'/^([^:]+):\s*(.*)$/',
+					$line,
+					$matches
+				)) {
+					$key =
+						$this->normalize_metadata_key($matches[1]);
 					if ($this->is_allowed_metadata_key($key)) {
-						$metadata[$key] = trim((string) $matches[2]);
+						$metadata[$key]
+							=
+							trim((string)
+							$matches[2]);
 					}
 				}
 			}
 		}
 
-		return array('metadata' => $metadata, 'body' => substr($normalized, $end_index + 5));
+		return
+			array(
+				'metadata'
+				=>
+				$metadata,
+				'body'
+				=>
+				substr(
+					$normalized,
+					$end_index
+						+
+						5
+				)
+			);
 	}
 
-	private function parse_leading_metadata($markdown)
+	private
+	function
+	parse_leading_metadata($markdown)
 	{
-		$lines = preg_split('/\r?\n/', preg_replace('/^\xEF\xBB\xBF/', '', (string) $markdown));
-		$metadata = array();
-		$index = 0;
-		$saw_metadata = false;
+		$lines =
+			preg_split(
+				'/\r?\n/',
+				preg_replace(
+					'/^\xEF\xBB\xBF/',
+					'',
+					(string)
+					$markdown
+				)
+			);
+		$metadata
+			=
+			array();
+		$index =
+			0;
+		$saw_metadata
+			= false;
 		if (!is_array($lines)) {
-			$lines = array();
+			$lines =
+				array();
 		}
 
-		while ($index < count($lines)) {
-			$line = trim((string) $lines[$index]);
+		while (
+			$index
+			< count($lines)
+		) {
+			$line = trim((string)
+			$lines[$index]);
 			if ('' === $line) {
 				if ($saw_metadata) {
 					$index++;
@@ -2391,300 +3612,953 @@ final class AI_Article_Publisher
 				$index++;
 				continue;
 			}
-			if (!preg_match('/^([^:]{1,60}):\s*(.*)$/', $line, $matches)) {
+			if (!preg_match(
+				'/^([^:]{1,60}):\s*(.*)$/',
+				$line,
+				$matches
+			)) {
 				break;
 			}
 			$key = $this->normalize_metadata_key($matches[1]);
 			if (!$this->is_allowed_metadata_key($key)) {
 				break;
 			}
-			$metadata[$key] = trim((string) $matches[2]);
-			$saw_metadata = true;
+			$metadata[$key]
+				=
+				trim((string)
+				$matches[2]);
+			$saw_metadata
+				=
+				true;
 			$index++;
 		}
 
-		return array('metadata' => $metadata, 'body' => implode("\n", array_slice($lines, $index)));
+		return
+			array(
+				'metadata'
+				=>
+				$metadata,
+				'body'
+				=>
+				implode(
+					"\n",
+					array_slice(
+						$lines,
+						$index
+					)
+				)
+			);
 	}
 
-	private function normalize_metadata_key($value)
+	private
+	function
+	normalize_metadata_key($value)
 	{
-		$key = strtolower(trim((string) $value));
-		$key = preg_replace('/[^a-z0-9]+/', '_', $key);
-		return trim((string) $key, '_');
+		$key
+			=
+			strtolower(trim((string)
+			$value));
+		$key
+			=
+			preg_replace(
+				'/[^a-z0-9]+/',
+				'_',
+				$key
+			);
+		return
+			trim(
+				(string)
+				$key,
+				'_'
+			);
 	}
 
-	private function is_allowed_metadata_key($key)
+	private
+	function
+	is_allowed_metadata_key($key)
 	{
-		return in_array($key, array('title', 'slug', 'excerpt', 'brief', 'image_prompt', 'featured_image_prompt', 'prompt', 'seo_title', 'meta_title', 'meta_description', 'seo_description', 'focus_keyword', 'canonical_url', 'featured_image_url', 'image_url', 'categories', 'category', 'tags', 'tag'), true);
+		return
+			in_array(
+				$key,
+				array(
+					'title',
+					'slug',
+					'url',
+					'permalink',
+					'excerpt',
+					'brief',
+					'image_prompt',
+					'featured_image_prompt',
+					'prompt',
+					'seo_title',
+					'meta_title',
+					'meta_description',
+					'seo_description',
+					'focus_keyword',
+					'canonical_url',
+					'featured_image_url',
+					'featured_image',
+					'image_url',
+					'categories',
+					'category',
+					'tags',
+					'tag'
+				),
+				true
+			);
 	}
 
-	private function pick_metadata($metadata, $keys)
-	{
-		foreach ($keys as $key) {
+	private
+	function
+	pick_metadata(
+		$metadata,
+		$keys
+	) {
+		foreach (
+			$keys
+			as
+			$key
+		) {
 			if (!empty($metadata[$key])) {
-				return trim((string) $metadata[$key]);
+				return
+					trim((string)
+					$metadata[$key]);
 			}
 		}
-		return '';
+		return
+			'';
 	}
 
-	private function markdown_to_html($markdown)
+	private
+	function
+	markdown_to_html($markdown)
 	{
-		$markdown = (string) $markdown;
-		if (preg_match('/<[a-z][\s\S]*>/i', $markdown)) {
-			return trim($markdown);
+		$markdown
+			=
+			(string)
+			$markdown;
+		if (preg_match(
+			'/
+                                                                                                                    <[a-z][\s\S]*>
+                                                                                                                        /i',
+			$markdown
+		)) {
+			return
+				trim($markdown);
 		}
 
-		$lines = preg_split('/\r?\n/', str_replace("\r\n", "\n", $markdown));
+		$lines
+			=
+			preg_split(
+				'/\r?\n/',
+				str_replace(
+					"\r\n",
+					"\n",
+					$markdown
+				)
+			);
 		if (!is_array($lines)) {
-			$lines = array();
+			$lines
+				=
+				array();
 		}
 
-		$blocks = array();
-		$paragraph = array();
-		$list_items = array();
-		$list_type = '';
-		$flush_paragraph = function () use (&$paragraph, &$blocks) {
-			if (empty($paragraph)) {
-				return;
-			}
-			$blocks[] = '<p>' . $this->apply_inline_markdown(implode(' ', $paragraph)) . '</p>';
-			$paragraph = array();
-		};
-		$flush_list = function () use (&$list_items, &$list_type, &$blocks) {
-			if (!$list_type || empty($list_items)) {
-				return;
-			}
-			$blocks[] = '<' . $list_type . '>' . implode('', $list_items) . '</' . $list_type . '>';
-			$list_items = array();
-			$list_type = '';
-		};
-
-		foreach ($lines as $raw_line) {
-			$line = trim((string) $raw_line);
+		$blocks
+			=
+			array();
+		$paragraph
+			=
+			array();
+		$list_items
+			=
+			array();
+		$list_type
+			=
+			'';
+		$flush_paragraph
+			=
+			function ()
+			use (
+				&$paragraph,
+				&$blocks
+			) {
+				if (empty($paragraph)) {
+					return;
+				}
+				$blocks[]
+					=
+					'
+                                                                                                                        <p>' .
+					$this->apply_inline_markdown(implode(
+						'
+                                                                                                                            ',
+						$paragraph
+					))
+					.
+					'
+                                                                                                                        </p>
+                                                                                                                        ';
+				$paragraph
+					=
+					array();
+			};
+		$flush_list
+			=
+			function ()
+			use (
+				&$list_items,
+				&$list_type,
+				&$blocks
+			) {
+				if (
+					!$list_type
+					||
+					empty($list_items)
+				) {
+					return;
+				}
+				$blocks[]
+					=
+					'
+                                                                                                                        <' . $list_type
+					. '>'
+					.
+					implode(
+						'',
+						$list_items
+					)
+					. '</'
+					.
+					$list_type
+					. '>';
+				$list_items = array();
+				$list_type = '';
+			};
+		foreach (
+			$lines
+			as
+			$raw_line
+		) {
+			$line = trim((string)
+			$raw_line);
 			if ('' === $line) {
 				$flush_paragraph();
 				$flush_list();
 				continue;
 			}
-			if (preg_match('/^(#{1,6})\s+(.+)$/', $line, $heading_matches)) {
+			if (preg_match(
+				'/^(#{1,6})\s+(.+)$/',
+				$line,
+				$heading_matches
+			)) {
 				$flush_paragraph();
 				$flush_list();
-				$level = min(strlen($heading_matches[1]), 6);
-				$blocks[] = sprintf('<h%d>%s</h%d>', $level, $this->apply_inline_markdown($heading_matches[2]), $level);
+				$level = min(
+					strlen($heading_matches[1]),
+					6
+				);
+				$blocks[] = sprintf(
+					'<h%d>
+                                                                                                                            %s
+                                                                                                                            </h%d>
+                                                                                                                            ',
+					$level,
+					$this->apply_inline_markdown($heading_matches[2]),
+					$level
+				);
 				continue;
 			}
-			if (preg_match('/^\d+\.\s+(.+)$/', $line, $ordered_matches)) {
+			if (preg_match(
+				'/^\d+\.\s+(.+)$/',
+				$line,
+				$ordered_matches
+			)) {
 				$flush_paragraph();
-				if ($list_type && 'ol' !== $list_type) {
+				if (
+					$list_type
+					&&
+					'ol'
+					!==
+					$list_type
+				) {
 					$flush_list();
 				}
-				$list_type = 'ol';
-				$list_items[] = '<li>' . $this->apply_inline_markdown($ordered_matches[1]) . '</li>';
+				$list_type
+					=
+					'ol';
+				$list_items[]
+					=
+					'
+                                                                                                                            <li>'
+					.
+					$this->apply_inline_markdown($ordered_matches[1])
+					.
+					'
+                                                                                                                            </li>
+                                                                                                                            ';
 				continue;
 			}
-			if (preg_match('/^[-*+]\s+(.+)$/', $line, $unordered_matches)) {
+			if (preg_match(
+				'/^[-*+]\s+(.+)$/',
+				$line,
+				$unordered_matches
+			)) {
 				$flush_paragraph();
-				if ($list_type && 'ul' !== $list_type) {
+				if (
+					$list_type
+					&&
+					'ul'
+					!==
+					$list_type
+				) {
 					$flush_list();
 				}
-				$list_type = 'ul';
-				$list_items[] = '<li>' . $this->apply_inline_markdown($unordered_matches[1]) . '</li>';
+				$list_type
+					=
+					'ul';
+				$list_items[]
+					=
+					'
+                                                                                                                            <li>'
+					.
+					$this->apply_inline_markdown($unordered_matches[1])
+					.
+					'
+                                                                                                                            </li>
+                                                                                                                            ';
 				continue;
 			}
-			if (preg_match('/^<\/?[a-z][\s\S]*>$/i', $line)) {
+			if (preg_match(
+				'/^
+                                                                                                                            <\
+                                                                                                                                /?[a-z][\s\S]*>
+                                                                                                                                $/i',
+				$line
+			)) {
 				$flush_paragraph();
 				$flush_list();
-				$blocks[] = $line;
+				$blocks[]
+					=
+					$line;
 				continue;
 			}
 
 			if ($list_type) {
 				$flush_list();
 			}
-			$paragraph[] = $line;
+			$paragraph[]
+				=
+				$line;
 		}
 
 		$flush_paragraph();
 		$flush_list();
 
-		return implode("\n", $blocks);
+		return
+			implode(
+				"\n",
+				$blocks
+			);
 	}
 
-	private function apply_inline_markdown($value)
+	private
+	function
+	apply_inline_markdown($value)
 	{
-		$text = esc_html((string) $value);
-		$text = preg_replace_callback('/!\[([^\]]*)\]\((https?:\/\/[^\s)]+)\)/', function ($matches) {
-			return sprintf('<img src="%s" alt="%s" loading="lazy" decoding="async" />', esc_url($matches[2]), esc_attr($matches[1]));
-		}, $text);
-		$text = preg_replace_callback('/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/', function ($matches) {
-			return sprintf('<a href="%s">%s</a>', esc_url($matches[2]), esc_html($matches[1]));
-		}, $text);
-		$text = preg_replace('/`([^`]+)`/', '<code>$1</code>', $text);
-		$text = preg_replace('/\*\*([^*]+)\*\*/', '<strong>$1</strong>', $text);
-		return preg_replace('/(^|[^*])\*([^*]+)\*(?!\*)/', '$1<em>$2</em>', $text);
+		$text
+			=
+			esc_html((string)
+			$value);
+		$text
+			=
+			preg_replace_callback(
+				'/!\[([^\]]*)\]\((https?:\/\/[^\s)]+)\)/',
+				function ($matches) {
+					return
+						sprintf(
+							'<img
+                                                                                                                                    src="%s"
+                                                                                                                                    alt="%s"
+                                                                                                                                    loading="lazy"
+                                                                                                                                    decoding="async" />',
+							esc_url($matches[2]),
+							esc_attr($matches[1])
+						);
+				},
+				$text
+			);
+		$text
+			=
+			preg_replace_callback(
+				'/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/',
+				function ($matches) {
+					return
+						sprintf(
+							'<a
+                                                                                                                                    href="%s">%s</a>',
+							esc_url($matches[2]),
+							esc_html($matches[1])
+						);
+				},
+				$text
+			);
+		$text
+			=
+			preg_replace(
+				'/`([^`]+)`/',
+				'<code>$1</code>',
+				$text
+			);
+		$text
+			=
+			preg_replace(
+				'/\*\*([^*]+)\*\*/',
+				'<strong>$1</strong>',
+				$text
+			);
+		return
+			preg_replace(
+				'/(^|[^*])\*([^*]+)\*(?!\*)/',
+				'$1<em>$2</em>',
+				$text
+			);
 	}
 
-	private function strip_html_text($value)
+	private
+	function
+	strip_html_text($value)
 	{
-		$value = preg_replace('/<[^>]+>/', ' ', (string) $value);
-		$value = preg_replace('/\s+/', ' ', (string) $value);
-		return trim((string) $value);
+		$value
+			=
+			preg_replace(
+				'/
+                                                                                                                                <[^>]+>/',
+				'
+                                                                                                                                    ',
+				(string)
+				$value
+			);
+		$value
+			=
+			preg_replace(
+				'/\s+/',
+				'
+                                                                                                                                    ',
+				(string)
+				$value
+			);
+		return
+			trim((string)
+			$value);
 	}
 
-	private function truncate($value, $max_length)
-	{
-		$value = trim((string) $value);
-		if (strlen($value) <= $max_length) {
-			return $value;
+	private
+	function
+	truncate(
+		$value,
+		$max_length
+	) {
+		$value
+			=
+			trim((string)
+			$value);
+		if (
+			strlen($value)
+			<= $max_length
+		) {
+			return
+				$value;
 		}
-		return rtrim(substr($value, 0, $max_length - 1)) . '...';
+		return
+			rtrim(substr(
+				$value,
+				0,
+				$max_length
+					-
+					1
+			))
+			. '...';
 	}
-
-	private function inject_inline_images_into_html($html, $images)
-	{
+	private
+	function
+	inject_inline_images_into_html(
+		$html,
+		$images
+	) {
 		if (empty($images)) {
-			return $html;
+			return
+				$html;
 		}
-		$parts = preg_split('/<\/p>/i', $html);
-		if (!is_array($parts) || count($parts) <= 1) {
+		$parts = preg_split(
+			'/<\/p>/i',
+			$html
+		);
+		if (
+			!is_array($parts)
+			||
+			count($parts)
+			<= 1
+		) {
 			$appended = '';
-			foreach ($images as $image) {
-				$appended .= $this->build_inline_image_figure($image);
+			foreach (
+				$images
+				as
+				$image
+			) {
+				$appended
+					.= $this->build_inline_image_figure($image);
 			}
-			return $html . $appended;
+			return
+				$html
+				.
+				$appended;
 		}
 
-		$interval = max(1, (int) floor(count($parts) / (count($images) + 1)));
-		$image_index = 0;
-		$output = '';
-		foreach ($parts as $index => $part) {
-			if ('' !== $part) {
-				$output .= $part;
+		$interval
+			=
+			max(
+				1,
+				(int)
+				floor(count($parts)
+					/
+					(count($images)
+						+
+						1))
+			);
+		$image_index
+			=
+			0;
+		$output
+			=
+			'';
+		foreach (
+			$parts
+			as
+			$index
+			=>
+			$part
+		) {
+			if (
+				''
+				!==
+				$part
+			) {
+				$output
+					.=
+					$part;
 			}
-			if ($index < count($parts) - 1) {
-				$output .= '</p>';
+			if (
+				$index
+				< count($parts)
+				-
+				1
+			) {
+				$output
+					.= '</p>';
 			}
-			if ($image_index < count($images) && 0 === (($index + 1) % $interval)) {
-				$output .= $this->build_inline_image_figure($images[$image_index]);
+			if (
+				$image_index
+				<
+				count($images)
+				&&
+				0 === (($index
+					+
+					1)
+					%
+					$interval)
+			) {
+				$output
+					.= $this->build_inline_image_figure($images[$image_index]);
 				$image_index++;
 			}
 		}
-		while ($image_index < count($images)) {
-			$output .= $this->build_inline_image_figure($images[$image_index]);
+		while (
+			$image_index
+			< count($images)
+		) {
+			$output
+				.= $this->build_inline_image_figure($images[$image_index]);
 			$image_index++;
 		}
-		return $output;
+		return
+			$output;
 	}
 
-	private function build_inline_image_figure($image)
+	private
+	function
+	build_inline_image_figure($image)
 	{
-		return sprintf('<figure class="wp-block-image size-large"><img src="%s" alt="%s" loading="lazy" decoding="async" /></figure>', esc_url(isset($image['sourceUrl']) ? $image['sourceUrl'] : ''), esc_attr(isset($image['altText']) ? $image['altText'] : ''));
+		return
+			sprintf(
+				'
+                                                                                                                                                <figure
+                                                                                                                                                    class="wp-block-image size-large">
+                                                                                                                                                    <img src="%s"
+                                                                                                                                                        alt="%s"
+                                                                                                                                                        loading="lazy"
+                                                                                                                                                        decoding="async" />
+                                                                                                                                                </figure>
+                                                                                                                                                ',
+				esc_url(isset($image['sourceUrl'])
+					?
+					$image['sourceUrl']
+					:
+					''),
+				esc_attr(isset($image['altText'])
+					?
+					$image['altText']
+					:
+					'')
+			);
 	}
 
-	private function validate_required_links($html, $links)
-	{
-		$present = array();
-		$missing = array();
-		$duplicate_required = array();
-		foreach ($links as $link) {
+	private
+	function
+	validate_required_links(
+		$html,
+		$links
+	) {
+		$present
+			=
+			array();
+		$missing
+			=
+			array();
+		$duplicate_required
+			=
+			array();
+		foreach (
+			$links
+			as
+			$link
+		) {
 			if (empty($link['required'])) {
 				continue;
 			}
-			$count = $this->count_exact_anchor_matches($html, $link);
-			if (1 === $count) {
-				$present[] = $link;
-			} elseif (0 === $count) {
-				$missing[] = $link;
+			$count
+				=
+				$this->count_exact_anchor_matches(
+					$html,
+					$link
+				);
+			if (
+				1
+				===
+				$count
+			) {
+				$present[]
+					=
+					$link;
+			} elseif (
+				0
+				===
+				$count
+			) {
+				$missing[]
+					=
+					$link;
 			} else {
-				$duplicate_required[] = $link;
+				$duplicate_required[]
+					=
+					$link;
 			}
 		}
-		return array('present' => $present, 'missing' => $missing, 'duplicateRequired' => $duplicate_required);
+		return
+			array(
+				'present'
+				=>
+				$present,
+				'missing'
+				=>
+				$missing,
+				'duplicateRequired'
+				=>
+				$duplicate_required
+			);
 	}
 
-	private function count_exact_anchor_matches($html, $link)
-	{
-		$href = preg_quote(trim((string) $link['url']), '/');
-		$anchor = preg_quote(trim((string) $link['anchorText']), '/');
-		return preg_match_all('/<a\b[^>]*\bhref\s*=\s*([\'"])' . $href . '\1[^>]*>\s*' . $anchor . '\s*<\/a>/i', (string) $html);
+	private
+	function
+	count_exact_anchor_matches(
+		$html,
+		$link
+	) {
+		$href
+			=
+			preg_quote(
+				trim((string)
+				$link['url']),
+				'/'
+			);
+		$anchor
+			=
+			preg_quote(
+				trim((string)
+				$link['anchorText']),
+				'/'
+			);
+		return
+			preg_match_all(
+				'/
+                                                                                                                                                <a\b[^>
+                                                                                                                                                    ]*\bhref\s*=\s*([\'"])'
+					.
+					$href
+					.
+					'\1[^>]*>\s*'
+					.
+					$anchor
+					.
+					'\s*
+                                                                                                                                                    <\
+                                                                                                                                                        /a>
+                                                                                                                                                        /i',
+				(string)
+				$html
+			);
 	}
 
-	private function dedupe_required_links_in_html($html, $links)
-	{
-		$updated_html = (string) $html;
-		foreach ($links as $link) {
+	private
+	function
+	dedupe_required_links_in_html(
+		$html,
+		$links
+	) {
+		$updated_html
+			=
+			(string)
+			$html;
+		foreach (
+			$links
+			as
+			$link
+		) {
 			if (empty($link['required'])) {
 				continue;
 			}
-			$href = preg_quote(trim((string) $link['url']), '/');
-			$anchor = preg_quote(trim((string) $link['anchorText']), '/');
-			$pattern = '/<a\b[^>]*\bhref\s*=\s*([\'"])' . $href . '\1[^>]*>\s*' . $anchor . '\s*<\/a>/i';
-			$seen = false;
-			$updated_html = preg_replace_callback($pattern, function ($matches) use (&$seen, $link) {
-				if (!$seen) {
-					$seen = true;
-					return $matches[0];
-				}
-				return $link['anchorText'];
-			}, $updated_html);
+			$href
+				=
+				preg_quote(
+					trim((string)
+					$link['url']),
+					'/'
+				);
+			$anchor
+				=
+				preg_quote(
+					trim((string)
+					$link['anchorText']),
+					'/'
+				);
+			$pattern
+				=
+				'/
+                                                                                                                                                        <a\b[^>
+                                                                                                                                                            ]*\bhref\s*=\s*([\'"])'
+				.
+				$href
+				.
+				'\1[^>]*>\s*'
+				.
+				$anchor
+				.
+				'\s*
+                                                                                                                                                            <\
+                                                                                                                                                                /a>
+                                                                                                                                                                /i';
+			$seen
+				=
+				false;
+			$updated_html
+				=
+				preg_replace_callback(
+					$pattern,
+					function ($matches)
+					use (
+						&$seen,
+						$link
+					) {
+						if (!$seen) {
+							$seen
+								=
+								true;
+							return
+								$matches[0];
+						}
+						return
+							$link['anchorText'];
+					},
+					$updated_html
+				);
 		}
-		return $updated_html;
+		return
+			$updated_html;
 	}
 
-	private function enforce_link_policies_in_html($html, $links)
-	{
-		$follow_type_by_url = array();
-		foreach ($links as $link) {
-			$follow_type_by_url[$this->normalize_url_for_comparison($link['url'])] = $link['followType'];
+	private
+	function
+	enforce_link_policies_in_html(
+		$html,
+		$links
+	) {
+		$follow_type_by_url
+			=
+			array();
+		foreach (
+			$links
+			as
+			$link
+		) {
+			$follow_type_by_url[$this->normalize_url_for_comparison($link['url'])]
+				=
+				$link['followType'];
 		}
 
-		return preg_replace_callback('/<a\b[^>]*>/i', function ($matches) use ($follow_type_by_url) {
-			$anchor_tag = $matches[0];
-			$href = $this->get_href_from_anchor_tag($anchor_tag);
-			if (!$href) {
-				return $anchor_tag;
-			}
+		return
+			preg_replace_callback(
+				'/
+                                                                                                                                                                <a\b[^>
+                                                                                                                                                                    ]*>/i',
+				function ($matches)
+				use ($follow_type_by_url) {
+					$anchor_tag
+						=
+						$matches[0];
+					$href
+						=
+						$this->get_href_from_anchor_tag($anchor_tag);
+					if (!$href) {
+						return
+							$anchor_tag;
+					}
 
-			$follow_type = isset($follow_type_by_url[$this->normalize_url_for_comparison($href)]) ? $follow_type_by_url[$this->normalize_url_for_comparison($href)] : 'dofollow';
-			$updated = $this->set_anchor_attribute($anchor_tag, 'target', '_blank');
-			$rel_tokens = array('noopener', 'noreferrer');
-			if ('nofollow' === $follow_type) {
-				$rel_tokens[] = 'nofollow';
-			}
-			return $this->set_anchor_attribute($updated, 'rel', implode(' ', $rel_tokens));
-		}, (string) $html);
+					$follow_type
+						=
+						isset($follow_type_by_url[$this->normalize_url_for_comparison($href)])
+						?
+						$follow_type_by_url[$this->normalize_url_for_comparison($href)]
+						:
+						'dofollow';
+					$updated
+						=
+						$this->set_anchor_attribute(
+							$anchor_tag,
+							'target',
+							'_blank'
+						);
+					$rel_tokens
+						=
+						array(
+							'noopener',
+							'noreferrer'
+						);
+					if (
+						'nofollow'
+						===
+						$follow_type
+					) {
+						$rel_tokens[]
+							=
+							'nofollow';
+					}
+					return
+						$this->set_anchor_attribute(
+							$updated,
+							'rel',
+							implode(
+								'
+                                                                                                                                                                    ',
+								$rel_tokens
+							)
+						);
+				},
+				(string)
+				$html
+			);
 	}
 
-	private function get_href_from_anchor_tag($anchor_tag)
+	private
+	function
+	get_href_from_anchor_tag($anchor_tag)
 	{
-		if (preg_match('/\bhref\s*=\s*([\'"])(.*?)\1/i', $anchor_tag, $matches)) {
-			return $matches[2];
+		if (preg_match(
+			'/\bhref\s*=\s*([\'"])(.*?)\1/i',
+			$anchor_tag,
+			$matches
+		)) {
+			return
+				$matches[2];
 		}
-		return '';
+		return
+			'';
 	}
 
-	private function set_anchor_attribute($anchor_tag, $attribute, $value)
-	{
-		$pattern = '/\s' . preg_quote($attribute, '/') . '\s*=\s*("[^"]*"|\'[^\']*\'|[^\s>]+)/i';
-		$anchor_tag = preg_replace($pattern, '', $anchor_tag);
-		return preg_replace('/>$/', sprintf(' %s="%s">', $attribute, esc_attr($value)), (string) $anchor_tag);
+	private
+	function
+	set_anchor_attribute(
+		$anchor_tag,
+		$attribute,
+		$value
+	) {
+		$pattern
+			=
+			'/\s'
+			.
+			preg_quote(
+				$attribute,
+				'/'
+			)
+			.
+			'\s*=\s*("[^"]*"|\'[^\']*\'|[^\s>]+)/i';
+		$anchor_tag
+			=
+			preg_replace(
+				$pattern,
+				'',
+				$anchor_tag
+			);
+		return
+			preg_replace(
+				'/>$/',
+				sprintf(
+					'
+                                                                                                                                                                    %s="%s">',
+					$attribute,
+					esc_attr($value)
+				),
+				(string)
+				$anchor_tag
+			);
 	}
 
-	private function normalize_url_for_comparison($url)
+	private
+	function
+	normalize_url_for_comparison($url)
 	{
-		return strtolower(rtrim(trim((string) $url), '/'));
+		return
+			strtolower(rtrim(
+				trim((string)
+				$url),
+				'/'
+			));
 	}
 
-	private function is_required_link($link)
+	private
+	function
+	is_required_link($link)
 	{
-		return !empty($link['required']);
+		return
+			!empty($link['required']);
 	}
 
-	private function is_optional_link($link)
+	private
+	function
+	is_optional_link($link)
 	{
-		return empty($link['required']);
+		return
+			empty($link['required']);
 	}
 }
 
-new AI_Article_Publisher();
+new
+	AI_Article_Publisher();

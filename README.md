@@ -11,7 +11,7 @@ Next.js + Prisma + MySQL platform for AI-assisted WordPress publishing with:
 - Admin panel for users, packages, and token adjustments
 - Device lock (one account per device, one device per account)
 - Manual post status control (draft, publish now, schedule)
-- Import posts from a Google Doc link only, uploading a provided/embedded featured image and generating character-limited AI SEO fields when needed
+- Import posts directly from a Google Doc link, preserving document HTML, inline images, and document-provided SEO metadata without an OpenAI key
 - Category news auto-publish pipeline from NewsData API with OpenAI rewrite + fresh image generation
 
 ## Tech stack

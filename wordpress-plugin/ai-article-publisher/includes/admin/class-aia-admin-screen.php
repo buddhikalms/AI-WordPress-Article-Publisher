@@ -90,7 +90,7 @@ final class AIA_Admin_Screen
 					'newsSaved' => __('News autopilot finished.', 'ai-article-publisher'),
 					'noActionsYet' => __('No actions run yet.', 'ai-article-publisher'),
 					'noDraftYet' => __('No draft generated yet. Generate a manual draft to preview the article here.', 'ai-article-publisher'),
-					'noImageYet' => __('No featured image yet. Generate one in Manual Studio or import from a Google Doc.', 'ai-article-publisher'),
+					'noImageYet' => __('No featured image yet. Generate one in Manual Studio or import a Google Doc that includes an image.', 'ai-article-publisher'),
 				),
 			)
 		);
@@ -213,7 +213,7 @@ final class AIA_Admin_Screen
 			array(
 				'label' => __('OpenAI Text Model', 'ai-article-publisher'),
 				'status' => !empty($settings['openai_text_model']) ? $settings['openai_text_model'] : AI_Article_Publisher::DEFAULT_TEXT_MODEL,
-				'description' => __('Used for manual drafting, Google Doc enrichment, and News Autopilot rewrites.', 'ai-article-publisher'),
+				'description' => __('Used for manual drafting and News Autopilot rewrites.', 'ai-article-publisher'),
 				'is_ready' => true,
 			),
 			array(
@@ -253,7 +253,7 @@ final class AIA_Admin_Screen
 		$current_page = self::DOCUMENTATION_PAGE;
 		$page_nav_items = $this->get_page_nav_items();
 		$quick_start_steps = array(
-			__('Open the Credentials page and save your OpenAI API key. Add the NewsData key only if you plan to use News Autopilot.', 'ai-article-publisher'),
+			__('Open the Credentials page and save your OpenAI API key if you use Manual Studio. Add the NewsData key only if you plan to use News Autopilot.', 'ai-article-publisher'),
 			__('Go to Studio and set shared categories and SEO fields before you start generating or importing content.', 'ai-article-publisher'),
 			__('Use Manual Studio for original articles, Google Doc Import for editorial drafts, or News Autopilot for source-driven rewrites.', 'ai-article-publisher'),
 			__('Review the generated HTML, preview, image, and response output before publishing live posts.', 'ai-article-publisher'),
@@ -273,7 +273,7 @@ final class AIA_Admin_Screen
 					__('Use a public Google Doc URL or document ID.', 'ai-article-publisher'),
 					__('Front matter keys like `title`, `slug`, `excerpt`, `categories`, `tags`, and `featured_image_url` are supported.', 'ai-article-publisher'),
 					__('If `featured_image_url` is blank, the first embedded Google Doc image is uploaded as the featured image.', 'ai-article-publisher'),
-					__('When AIOSEO or Yoast is selected, AI generates character-limited SEO fields for the imported article.', 'ai-article-publisher'),
+					__('When AIOSEO or Yoast is selected, Google Doc front matter and document-derived fallbacks are applied without an AI provider key.', 'ai-article-publisher'),
 					__('Private docs must be shared as "Anyone with the link can view" or published to the web.', 'ai-article-publisher'),
 				),
 			),

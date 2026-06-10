@@ -27,6 +27,8 @@ export interface GoogleDocImage {
   url: string;
   altText: string;
   title: string;
+  imageBase64?: string;
+  mimeType?: string;
 }
 
 const extractDocumentId = (input: string) => {
@@ -60,6 +62,8 @@ const normalizeMetadataKey = (value: string) =>
 const allowedMetadataKeys = new Set([
   "title",
   "slug",
+  "url",
+  "permalink",
   "excerpt",
   "brief",
   "image_prompt",
@@ -72,6 +76,7 @@ const allowedMetadataKeys = new Set([
   "focus_keyword",
   "canonical_url",
   "featured_image_url",
+  "featured_image",
   "image_url",
   "categories",
   "category",
@@ -117,6 +122,22 @@ const normalizeOptionalUrl = (value: string) => {
     return new URL(value.trim()).toString();
   } catch {
     return undefined;
+  }
+};
+
+const slugifyMetadataValue = (value: string) => {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return "";
+  }
+
+  try {
+    const parsed = new URL(trimmed);
+    const pathParts = parsed.pathname.split("/").filter(Boolean);
+    return slugifyArticle(pathParts.at(-1) || trimmed);
+  } catch {
+    const pathParts = trimmed.replace(/^\/+|\/+$/g, "").split("/").filter(Boolean);
+    return slugifyArticle(pathParts.at(-1) || trimmed);
   }
 };
 
@@ -344,7 +365,7 @@ const parseGoogleDocMarkdown = (markdown: string, fallbackTitle: string) => {
   }
 
   title = title || fallbackTitle;
-  const slug = slugifyArticle(pickMetadata(metadata, ["slug"]) || title) || "article";
+  const slug = slugifyMetadataValue(pickMetadata(metadata, ["slug", "url", "permalink"]) || title) || "article";
   const excerpt = pickMetadata(metadata, ["excerpt"]);
   const brief =
     pickMetadata(metadata, [
@@ -381,7 +402,7 @@ const parseGoogleDocMarkdown = (markdown: string, fallbackTitle: string) => {
       pickMetadata(metadata, ["canonical_url"]),
     ),
     featuredImageUrl: normalizeOptionalUrl(
-      pickMetadata(metadata, ["featured_image_url", "image_url"]),
+      pickMetadata(metadata, ["featured_image_url", "featured_image", "image_url"]),
     ),
     imagePrompt:
       pickMetadata(metadata, [
@@ -399,7 +420,7 @@ const getHtmlAttribute = (html: string, attribute: string) => {
 };
 
 const normalizeHtmlImageUrl = (rawSrc: string, baseUrl: string) => {
-  if (!rawSrc || rawSrc.startsWith("data:")) {
+  if (!rawSrc || parseInlineBase64ImageSource(rawSrc)) {
     return "";
   }
   try {
@@ -410,6 +431,23 @@ const normalizeHtmlImageUrl = (rawSrc: string, baseUrl: string) => {
   }
 };
 
+const parseInlineBase64ImageSource = (src: string) => {
+  const match = src.trim().match(/^(?:data:)?(image\/[a-z0-9.+-]+);base64,([\s\S]+)$/i);
+  if (!match) {
+    return null;
+  }
+
+  const imageBase64 = match[2].replace(/\s+/g, "");
+  if (!imageBase64) {
+    return null;
+  }
+
+  return {
+    mimeType: match[1].toLowerCase(),
+    imageBase64,
+  };
+};
+
 const extractImageItemsFromHtml = (html: string, baseUrl: string) => {
   const images: GoogleDocImage[] = [];
   const seen = new Set<string>();
@@ -418,7 +456,25 @@ const extractImageItemsFromHtml = (html: string, baseUrl: string) => {
 
   while ((match = imagePattern.exec(html))) {
     const imageTag = match[0];
-    const url = normalizeHtmlImageUrl(getHtmlAttribute(imageTag, "src"), baseUrl);
+    const rawSrc = getHtmlAttribute(imageTag, "src");
+    const inlineImage = parseInlineBase64ImageSource(rawSrc);
+    if (inlineImage) {
+      const key = rawSrc.trim();
+      if (seen.has(key)) {
+        continue;
+      }
+      seen.add(key);
+      images.push({
+        url: key,
+        altText: getHtmlAttribute(imageTag, "alt"),
+        title: getHtmlAttribute(imageTag, "title"),
+        imageBase64: inlineImage.imageBase64,
+        mimeType: inlineImage.mimeType,
+      });
+      continue;
+    }
+
+    const url = normalizeHtmlImageUrl(rawSrc, baseUrl);
     if (!url || seen.has(url)) {
       continue;
     }
@@ -444,6 +500,109 @@ const stripGoogleDocChrome = (html: string) =>
     .replace(/<style\b[\s\S]*?<\/style>/gi, "")
     .replace(/<meta\b[^>]*>/gi, "")
     .replace(/<link\b[^>]*>/gi, "");
+
+const parseGoogleDocClassStyles = (html: string) => {
+  const styles = new Map<string, string>();
+  const styleBlockPattern = /<style\b[^>]*>([\s\S]*?)<\/style>/gi;
+  let styleBlockMatch: RegExpExecArray | null;
+
+  while ((styleBlockMatch = styleBlockPattern.exec(html))) {
+    const css = styleBlockMatch[1];
+    const classRulePattern = /([^{}]+)\{([^{}]*)\}/g;
+    let classRuleMatch: RegExpExecArray | null;
+    while ((classRuleMatch = classRulePattern.exec(css))) {
+      const declarations = classRuleMatch[2].trim().replace(/;+$/g, "");
+      if (!declarations) {
+        continue;
+      }
+      const selector = classRuleMatch[1];
+      const classNames = selector.match(/\.([a-zA-Z0-9_-]+)/g) || [];
+      for (const classSelector of classNames) {
+        const className = classSelector.slice(1);
+        const existing = styles.get(className);
+        styles.set(className, existing ? `${existing}; ${declarations}` : declarations);
+      }
+    }
+  }
+
+  return styles;
+};
+
+const mergeStyleAttributes = (existingStyle: string, classStyle: string) => {
+  const existing = existingStyle.trim().replace(/;+$/g, "");
+  const fromClass = classStyle.trim().replace(/;+$/g, "");
+  if (!existing) {
+    return fromClass;
+  }
+  if (!fromClass) {
+    return existing;
+  }
+  return `${fromClass}; ${existing}`;
+};
+
+const inlineGoogleDocClassStyles = (bodyHtml: string, sourceHtml: string) => {
+  const classStyles = parseGoogleDocClassStyles(sourceHtml);
+  if (classStyles.size === 0) {
+    return bodyHtml;
+  }
+
+  return bodyHtml.replace(/<([a-z][a-z0-9]*)\b([^>]*)>/gi, (tag, name: string, attrs: string) => {
+    if (tag.startsWith("</")) {
+      return tag;
+    }
+
+    const classValue = getHtmlAttribute(tag, "class");
+    if (!classValue) {
+      return tag;
+    }
+
+    const mergedClassStyle = classValue
+      .split(/\s+/)
+      .map((className) => classStyles.get(className))
+      .filter((style): style is string => Boolean(style))
+      .join("; ");
+    if (!mergedClassStyle) {
+      return tag;
+    }
+
+    const existingStyle = getHtmlAttribute(tag, "style");
+    const mergedStyle = mergeStyleAttributes(existingStyle, mergedClassStyle);
+    if (/\bstyle\s*=/.test(attrs)) {
+      return tag.replace(/\bstyle\s*=\s*(["'])(.*?)\1/i, `style="${escapeHtml(mergedStyle)}"`);
+    }
+    return `<${name}${attrs} style="${escapeHtml(mergedStyle)}">`;
+  });
+};
+
+const convertInlineStyledHeadings = (html: string) =>
+  html.replace(/<p\b([^>]*)>([\s\S]*?)<\/p>/gi, (all, attrs: string, inner: string) => {
+    const text = htmlToText(inner);
+    const markdownHeading = text.match(/^(#{1,3})\s+(.+)$/);
+    if (markdownHeading) {
+      const level = markdownHeading[1].length;
+      return `<h${level}>${inner.replace(/^(\s*<[^>]+>)*\s*#{1,3}\s*/i, "").trim()}</h${level}>`;
+    }
+
+    const styleText = `${attrs} ${inner}`;
+    const fontSizeMatch = styleText.match(/font-size\s*:\s*([0-9.]+)\s*(pt|px)/i);
+    if (!fontSizeMatch) {
+      return all;
+    }
+
+    const rawSize = Number(fontSizeMatch[1]);
+    const sizePx = fontSizeMatch[2].toLowerCase() === "pt" ? rawSize * 1.333 : rawSize;
+    const isBold = /font-weight\s*:\s*(bold|[6-9]00)|<b\b|<strong\b/i.test(styleText);
+    if (sizePx >= 24) {
+      return `<h1>${inner.trim()}</h1>`;
+    }
+    if (sizePx >= 19) {
+      return `<h2>${inner.trim()}</h2>`;
+    }
+    if (sizePx >= 17.5 || (sizePx >= 16 && isBold)) {
+      return `<h3>${inner.trim()}</h3>`;
+    }
+    return all;
+  });
 
 const stripFrontMatterFromHtml = (html: string) => {
   let output = html.trim();
@@ -471,22 +630,267 @@ const stripFrontMatterFromHtml = (html: string) => {
   return output.trim();
 };
 
-const normalizeGoogleDocHtml = (html: string) =>
-  stripFrontMatterFromHtml(stripGoogleDocChrome(extractBodyHtml(html)))
-    .replace(/\sclass="[^"]*"/gi, "")
-    .replace(/\sstyle="[^"]*"/gi, "")
-    .replace(/\sid="[^"]*"/gi, "")
-    .replace(/<span\b[^>]*>([\s\S]*?)<\/span>/gi, "$1")
-    .replace(
-      /<p>\s*(#{1,3})\s+([\s\S]*?)<\/p>/gi,
-      (_all, hashes: string, text: string) =>
-        `<h${hashes.length}>${text.trim()}</h${hashes.length}>`,
-    )
-    .replace(/<p>\s*<\/p>/gi, "")
+const removeGoogleDocMetadataBlocks = (html: string) =>
+  html.replace(/<p\b[^>]*>([\s\S]*?)<\/p>/gi, (all, inner: string) => {
+    const text = htmlToText(inner);
+    const metadataMatch = text.match(/^([^:]{1,60}):\s*(.*)$/);
+    if (!metadataMatch) {
+      return all;
+    }
+    return allowedMetadataKeys.has(normalizeMetadataKey(metadataMatch[1])) ? "" : all;
+  });
+
+const absolutizeImageSources = (html: string, baseUrl: string) =>
+  html.replace(/<img\b[^>]*>/gi, (imageTag) => {
+    const src = getHtmlAttribute(imageTag, "src");
+    const absoluteSrc = normalizeHtmlImageUrl(src, baseUrl);
+    if (!absoluteSrc) {
+      return imageTag;
+    }
+    if (/\bsrc\s*=/.test(imageTag)) {
+      return imageTag.replace(/\bsrc\s*=\s*(["'])(.*?)\1/i, `src="${absoluteSrc}"`);
+    }
+    return imageTag.replace(/\s*\/?>$/, ` src="${absoluteSrc}" />`);
+  });
+
+const unwrapGoogleRedirectUrl = (url: string) => {
+  const trimmed = decodeHtmlAttribute(url).trim();
+  try {
+    const parsed = new URL(trimmed);
+    if (!/(^|\.)google\.[a-z.]+$/i.test(parsed.hostname) || parsed.pathname !== "/url") {
+      return trimmed;
+    }
+    return parsed.searchParams.get("q") || parsed.searchParams.get("url") || trimmed;
+  } catch {
+    return trimmed;
+  }
+};
+
+const setHtmlAttribute = (tag: string, attribute: string, value: string) => {
+  const escaped = escapeHtml(value);
+  const pattern = new RegExp(`\\s*\\b${attribute}\\s*=\\s*(["'])(.*?)\\1`, "i");
+  const withoutAttribute = tag.replace(pattern, "");
+  return withoutAttribute.replace(/>$/, ` ${attribute}="${escaped}">`);
+};
+
+const normalizeGoogleDocLinks = (html: string, baseUrl: string) =>
+  html.replace(/<a\b[^>]*>/gi, (anchorTag) => {
+    const rawHref = getHtmlAttribute(anchorTag, "href");
+    if (!rawHref) {
+      return anchorTag;
+    }
+
+    let href = unwrapGoogleRedirectUrl(rawHref);
+    try {
+      if (!href.startsWith("#")) {
+        href = new URL(href, baseUrl).toString();
+      }
+    } catch {
+      return anchorTag;
+    }
+
+    let updated = anchorTag.replace(/\bhref\s*=\s*(["'])(.*?)\1/i, `href="${escapeHtml(href)}"`);
+    if (!updated.includes(`href="${escapeHtml(href)}"`)) {
+      updated = updated.replace(/>$/, ` href="${escapeHtml(href)}">`);
+    }
+    if (!href.startsWith("#")) {
+      updated = setHtmlAttribute(updated, "target", "_blank");
+      updated = setHtmlAttribute(updated, "rel", "noopener noreferrer");
+    }
+    return updated;
+  });
+
+const extractAlignmentFromClass = (classValue: string) => {
+  const match = classValue.match(/(?:^|\s)align(left|right|center)(?:\s|$)/i);
+  return match?.[1]?.toLowerCase() || "";
+};
+
+const setHtmlClass = (tag: string, className: string) => {
+  const cleanClass = className.replace(/[^a-z0-9_-]/gi, "");
+  if (!cleanClass) {
+    return tag;
+  }
+
+  const existing = getHtmlAttribute(tag, "class");
+  const classes = Array.from(new Set([...existing.split(/\s+/).filter(Boolean), cleanClass]));
+  if (/\bclass\s*=/.test(tag)) {
+    return tag.replace(/\bclass\s*=\s*(["'])(.*?)\1/i, `class="${escapeHtml(classes.join(" "))}"`);
+  }
+  return tag.replace(/\s*\/?>$/, ` class="${escapeHtml(classes.join(" "))}" />`);
+};
+
+const detectGoogleDocBlockAlignment = (html: string) => {
+  const classAlignment = extractAlignmentFromClass(getHtmlAttribute(html, "class"));
+  if (classAlignment) {
+    return classAlignment;
+  }
+
+  const blockStyle = getHtmlAttribute(html, "style");
+  const floatMatch = blockStyle.match(/float\s*:\s*(left|right)/i);
+  if (floatMatch) {
+    return floatMatch[1].toLowerCase();
+  }
+  const textAlignMatch = blockStyle.match(/text-align\s*:\s*(right|center)/i);
+  if (textAlignMatch) {
+    return textAlignMatch[1].toLowerCase();
+  }
+
+  const childStyleMatch = html.match(/<(?:span|img)\b[^>]*\bstyle\s*=\s*(["'])(.*?)\1/i);
+  const childStyle = childStyleMatch?.[2] || "";
+  const childFloatMatch = childStyle.match(/float\s*:\s*(left|right)/i);
+  if (childFloatMatch) {
+    return childFloatMatch[1].toLowerCase();
+  }
+  const childTextAlignMatch = childStyle.match(/text-align\s*:\s*(right|center)/i);
+  if (childTextAlignMatch) {
+    return childTextAlignMatch[1].toLowerCase();
+  }
+  return "";
+};
+
+const applyGoogleDocImageAlignment = (html: string) =>
+  html.replace(/<p\b[^>]*>[\s\S]*?<\/p>/gi, (paragraph) => {
+    if (!/<img\b/i.test(paragraph)) {
+      return paragraph;
+    }
+    const alignment = detectGoogleDocBlockAlignment(paragraph);
+    if (!alignment) {
+      return paragraph;
+    }
+    return paragraph.replace(/<img\b[^>]*>/gi, (imageTag) =>
+      setHtmlClass(imageTag, `align${alignment}`),
+    );
+  });
+
+const buildResponsiveImageStyle = (alignment: string) => {
+  const base = "max-width:100%;height:auto;";
+  if (alignment === "right") {
+    return `${base}float:right;margin:0 0 1em 1.5em;`;
+  }
+  if (alignment === "left") {
+    return `${base}float:left;margin:0 1.5em 1em 0;`;
+  }
+  if (alignment === "center") {
+    return `${base}display:block;margin-left:auto;margin-right:auto;`;
+  }
+  return base;
+};
+
+const normalizeStyleAttribute = (style: string, tagName: string) => {
+  const allowedByTag: Record<string, Set<string>> = {
+    a: new Set(["color", "text-decoration"]),
+    span: new Set(["color", "font-weight", "font-style", "text-decoration"]),
+    strong: new Set(["font-weight"]),
+    em: new Set(["font-style"]),
+    p: new Set(["text-align"]),
+    h1: new Set(["text-align"]),
+    h2: new Set(["text-align"]),
+    h3: new Set(["text-align"]),
+    h4: new Set(["text-align"]),
+    h5: new Set(["text-align"]),
+    h6: new Set(["text-align"]),
+  };
+  const allowed = allowedByTag[tagName];
+  if (!allowed) {
+    return "";
+  }
+  return style
+    .split(";")
+    .map((declaration) => declaration.trim())
+    .filter(Boolean)
+    .map((declaration) => {
+      const separatorIndex = declaration.indexOf(":");
+      if (separatorIndex === -1) {
+        return "";
+      }
+      const property = declaration.slice(0, separatorIndex).trim().toLowerCase();
+      const value = declaration.slice(separatorIndex + 1).trim();
+      return allowed.has(property) ? `${property}:${value}` : "";
+    })
+    .filter(Boolean)
+    .join(";");
+};
+
+const setImageAttribute = (imageTag: string, attribute: string, value: string) => {
+  const escaped = escapeHtml(value);
+  if (new RegExp(`\\b${attribute}\\s*=`, "i").test(imageTag)) {
+    return imageTag.replace(
+      new RegExp(`\\b${attribute}\\s*=\\s*(["'])(.*?)\\1`, "i"),
+      `${attribute}="${escaped}"`,
+    );
+  }
+  return imageTag.replace(/\s*\/?>$/, ` ${attribute}="${escaped}" />`);
+};
+
+const makeGoogleDocHtmlResponsive = (html: string) =>
+  html.replace(/<([a-z][a-z0-9]*)\b([^>]*)>/gi, (tag, rawTagName: string) => {
+    const tagName = rawTagName.toLowerCase();
+    const existingClass = getHtmlAttribute(tag, "class");
+    let updated = tag.replace(/\s*\bclass\s*=\s*(["'])(.*?)\1/i, "");
+    if (!/^h[1-6]$/.test(tagName)) {
+      updated = updated.replace(/\s*\bid\s*=\s*(["'])(.*?)\1/i, "");
+    }
+
+    const style = getHtmlAttribute(updated, "style");
+    if (style) {
+      const cleanStyle = normalizeStyleAttribute(style, tagName);
+      updated = cleanStyle
+        ? updated.replace(/\bstyle\s*=\s*(["'])(.*?)\1/i, `style="${escapeHtml(cleanStyle)}"`)
+        : updated.replace(/\s*\bstyle\s*=\s*(["'])(.*?)\1/i, "");
+    }
+
+    if (tagName === "img") {
+      const alignment = extractAlignmentFromClass(existingClass);
+      if (alignment) {
+        updated = setHtmlClass(updated, `align${alignment}`);
+      }
+      updated = setImageAttribute(updated, "style", buildResponsiveImageStyle(alignment));
+      updated = updated.replace(/\s*\bwidth\s*=\s*(["'])(.*?)\1/i, "");
+      updated = updated.replace(/\s*\bheight\s*=\s*(["'])(.*?)\1/i, "");
+    }
+
+    return updated;
+  });
+
+const normalizeGoogleDocHtml = (html: string, baseUrl: string) =>
+  makeGoogleDocHtmlResponsive(
+    applyGoogleDocImageAlignment(
+      normalizeGoogleDocLinks(
+        absolutizeImageSources(
+          convertInlineStyledHeadings(
+            removeGoogleDocMetadataBlocks(
+              stripFrontMatterFromHtml(
+                stripGoogleDocChrome(inlineGoogleDocClassStyles(extractBodyHtml(html), html)),
+              ),
+            ),
+          ).replace(
+            /<p\b([^>]*)>\s*(#{1,3})\s+([\s\S]*?)<\/p>/gi,
+            (_all, _attrs: string, hashes: string, text: string) =>
+              `<h${hashes.length}>${text.trim()}</h${hashes.length}>`,
+          ),
+          baseUrl,
+        ),
+        baseUrl,
+      ),
+    ),
+  )
+    .replace(/<p\b[^>]*>\s*<\/p>/gi, "")
     .trim();
 
 const hasUsefulGoogleDocHtml = (html: string) =>
   Boolean(htmlToText(html).trim() || /<img\b/i.test(html));
+
+const isGoogleDocHtmlExportComplete = (html: string, fallbackHtml: string) => {
+  if (!hasUsefulGoogleDocHtml(html)) {
+    return false;
+  }
+  const htmlTextLength = htmlToText(html).length;
+  const fallbackTextLength = htmlToText(fallbackHtml).length;
+  if (fallbackTextLength <= 0) {
+    return true;
+  }
+  return htmlTextLength >= Math.max(80, Math.floor(fallbackTextLength * 0.6));
+};
 
 const mergeImageItems = (items: GoogleDocImage[]) => {
   const seen = new Set<string>();
@@ -503,8 +907,8 @@ const mergeImageItems = (items: GoogleDocImage[]) => {
 
 const fetchGoogleDocHtml = async (documentId: string) => {
   const candidates = [
-    `${GOOGLE_DOCS_BASE_URL}/${documentId}/mobilebasic`,
     `${GOOGLE_DOCS_BASE_URL}/${documentId}/export?format=html`,
+    `${GOOGLE_DOCS_BASE_URL}/${documentId}/mobilebasic`,
   ];
 
   for (const url of candidates) {
@@ -529,18 +933,6 @@ const fetchGoogleDocHtml = async (documentId: string) => {
   }
 
   return null;
-};
-
-const buildImageFigure = (url: string, title: string) =>
-  `<figure class="wp-block-image size-large"><img src="${escapeHtml(url)}" alt="${escapeHtml(
-    title,
-  )}" loading="lazy" decoding="async" /></figure>`;
-
-const appendImagesIfMissing = (html: string, imageUrls: string[], title: string) => {
-  if (imageUrls.length === 0 || /<img\b/i.test(html)) {
-    return html;
-  }
-  return `${html}\n${imageUrls.map((url) => buildImageFigure(url, title)).join("\n")}`;
 };
 
 export const readGoogleDocPost = async (input: { document: string }) => {
@@ -575,9 +967,12 @@ export const readGoogleDocPost = async (input: { document: string }) => {
 
   const parsed = parseGoogleDocMarkdown(markdown, "Untitled");
   const htmlExport = await fetchGoogleDocHtml(documentId);
-  const htmlFromDoc = htmlExport ? normalizeGoogleDocHtml(htmlExport.html) : "";
+  const htmlFromDoc = htmlExport ? normalizeGoogleDocHtml(htmlExport.html, htmlExport.url) : "";
   const htmlImages = htmlExport
-    ? extractImageItemsFromHtml(htmlExport.html, htmlExport.url)
+    ? mergeImageItems([
+        ...extractImageItemsFromHtml(htmlExport.html, htmlExport.url),
+        ...extractImageItemsFromHtml(htmlFromDoc, htmlExport.url),
+      ])
     : [];
   const featuredImage = parsed.featuredImageUrl
     ? { url: parsed.featuredImageUrl, altText: "", title: "" }
@@ -588,8 +983,8 @@ export const readGoogleDocPost = async (input: { document: string }) => {
   ]);
   const imageUrls = images.map((image) => image.url);
   const featuredImageUrl = featuredImage?.url;
-  const baseHtml = hasUsefulGoogleDocHtml(htmlFromDoc) ? htmlFromDoc : parsed.html;
-  const html = appendImagesIfMissing(baseHtml, imageUrls, parsed.title);
+  const baseHtml = isGoogleDocHtmlExportComplete(htmlFromDoc, parsed.html) ? htmlFromDoc : parsed.html;
+  const html = baseHtml;
 
   if (!parsed.title.trim()) {
     throw new HttpError(400, "Google Doc is missing a usable title.");
