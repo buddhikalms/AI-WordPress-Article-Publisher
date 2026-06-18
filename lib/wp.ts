@@ -140,11 +140,11 @@ const isHtmlResponse = (response: Response, parsedBody: unknown) => {
 };
 
 const getWpErrorMessage = (status: number, path: string) => {
+  if ((status === 401 || status === 403) && path.includes("/wp/v2/media")) {
+    return "WordPress refused the media upload. The saved login can be valid while the selected WordPress user, REST rules, or security plugin blocks uploading files.";
+  }
   if (status === 401) {
     return `WordPress rejected the saved credentials for ${path}. Check the selected site's WordPress username and application password.`;
-  }
-  if (status === 403 && path.includes("/wp/v2/media")) {
-    return "WordPress refused the media upload. Check that the selected site user can upload files.";
   }
   if (status === 403) {
     return `WordPress refused permission for ${path}. Check the selected site's user role and REST API permissions.`;

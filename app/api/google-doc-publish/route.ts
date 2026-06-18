@@ -6,7 +6,7 @@ import { HttpError, toErrorResponse } from "@/lib/errors";
 import { googleDocImportRequestSchema } from "@/lib/schemas";
 import { consumeTokens, TOKEN_COSTS } from "@/lib/tokens";
 import { getUserWordPressConfig } from "@/lib/user-wordpress";
-import { createPost, ensureCategory, ensureTag, uploadFeaturedMedia } from "@/lib/wp";
+import { createPost, ensureCategory, ensureTag, uploadFeaturedMedia, WpApiError } from "@/lib/wp";
 import { applySeoUpdate } from "@/lib/wp-seo";
 
 export const runtime = "nodejs";
@@ -144,6 +144,29 @@ const replaceImageSources = (
   });
 };
 
+const removeSkippedImageSources = (html: string, skippedSources: Set<string>) => {
+  if (skippedSources.size === 0) {
+    return html;
+  }
+
+  return html
+    .replace(/<img\b[^>]*>/gi, (imageTag) => {
+      const src = imageTag.match(/\bsrc\s*=\s*(["'])(.*?)\1/i)?.[2]?.replace(/&amp;/g, "&") || "";
+      const candidates = [src, src.replace(/&amp;/g, "&"), normalizeImageSourceKey(src)];
+      return candidates.some((candidate) => skippedSources.has(candidate)) ? "" : imageTag;
+    })
+    .replace(/<p\b[^>]*>\s*<\/p>/gi, "")
+    .replace(/<figure\b[^>]*>\s*<\/figure>/gi, "");
+};
+
+const getMediaUploadWarning = (label: string, error: unknown) => {
+  if (error instanceof WpApiError && (error.status === 401 || error.status === 403)) {
+    return `${label} was skipped because WordPress refused media uploads for the selected site user. The article was still published without that image.`;
+  }
+
+  throw error;
+};
+
 const setAnchorAttribute = (anchorTag: string, attribute: string, value: string) => {
   const escaped = value.replace(/&/g, "&amp;").replace(/"/g, "&quot;");
   const withoutAttribute = anchorTag.replace(
@@ -237,6 +260,7 @@ export async function POST(request: Request) {
       ...draft.tags,
       ...payload.newTagNames,
     ]);
+    const warnings: string[] = [];
     if (payload.newCategoryName?.trim()) {
       categoryNames.add(payload.newCategoryName.trim());
     }
@@ -265,6 +289,7 @@ export async function POST(request: Request) {
       string,
       { sourceUrl: string; altText: string; title: string }
     >();
+    const skippedImageSources = new Set<string>();
 
     for (let index = 0; index < docImages.length; index += 1) {
       const docImage = docImages[index];
@@ -283,16 +308,24 @@ export async function POST(request: Request) {
         (index === 0
           ? `Featured image for ${draft.title}`
           : `Image ${index + 1} for ${draft.title}`);
-      const uploaded = await uploadFeaturedMedia(
-        {
-          imageBase64: downloaded.imageBase64,
-          mimeType: downloaded.mimeType,
-          title: mediaTitle,
-          filenameSuggestion: `${draft.slug || "google-doc"}-${index + 1}`,
-          altText,
-        },
-        wpConfig,
-      );
+      let uploaded: Awaited<ReturnType<typeof uploadFeaturedMedia>>;
+      try {
+        uploaded = await uploadFeaturedMedia(
+          {
+            imageBase64: downloaded.imageBase64,
+            mimeType: downloaded.mimeType,
+            title: mediaTitle,
+            filenameSuggestion: `${draft.slug || "google-doc"}-${index + 1}`,
+            altText,
+          },
+          wpConfig,
+        );
+      } catch (error) {
+        warnings.push(getMediaUploadWarning(`Google Doc image ${index + 1}`, error));
+        skippedImageSources.add(originalUrl);
+        skippedImageSources.add(normalizeImageSourceKey(originalUrl));
+        continue;
+      }
 
       uploadedDocImages.push({
         originalUrl,
@@ -321,11 +354,14 @@ export async function POST(request: Request) {
       : null;
 
     const htmlForPublish = removeImageSourceFromHtml(
-      openLinksInNewTabs(
-        replaceImageSources(
-          draft.html,
-          imageSourceReplacements,
+      removeSkippedImageSources(
+        openLinksInNewTabs(
+          replaceImageSources(
+            draft.html,
+            imageSourceReplacements,
+          ),
         ),
+        skippedImageSources,
       ),
       featuredMedia?.source_url,
     );
@@ -396,6 +432,7 @@ export async function POST(request: Request) {
           }
         : null,
       importedImages: uploadedDocImages,
+      warnings,
       categories: Array.from(categoryIds),
       tags: Array.from(tagIds),
       seoUpdate,

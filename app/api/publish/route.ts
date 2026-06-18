@@ -12,6 +12,7 @@ import {
   ensureTag,
   createPost,
   uploadFeaturedMedia,
+  WpApiError,
 } from "@/lib/wp";
 
 export const runtime = "nodejs";
@@ -71,6 +72,15 @@ const injectInlineImagesIntoHtml = (
 
   return output;
 };
+
+const getMediaUploadWarning = (label: string, error: unknown) => {
+  if (error instanceof WpApiError && (error.status === 401 || error.status === 403)) {
+    return `${label} was skipped because WordPress refused media uploads for the selected site user. The article was still published without that image.`;
+  }
+
+  throw error;
+};
+
 export async function POST(request: Request) {
   try {
     const user = await requireVerifiedUser(request);
@@ -95,6 +105,7 @@ export async function POST(request: Request) {
     let featuredImageUrl: string | undefined;
     const categoryIds = new Set<number>(payload.selectedCategoryIds);
     const tagIds = new Set<number>(payload.selectedTagIds);
+    const warnings: string[] = [];
     const tagNames = new Set<string>([
       ...payload.newTagNames,
       ...payload.suggestedTags,
@@ -114,13 +125,17 @@ export async function POST(request: Request) {
     }
 
     if (payload.featuredImageBase64 && payload.featuredImageMime) {
-      const media = await uploadFeaturedMedia({
-        imageBase64: payload.featuredImageBase64,
-        mimeType: payload.featuredImageMime,
-        title: payload.title,
-      }, wpConfig);
-      featuredMediaId = media.id;
-      featuredImageUrl = media.source_url;
+      try {
+        const media = await uploadFeaturedMedia({
+          imageBase64: payload.featuredImageBase64,
+          mimeType: payload.featuredImageMime,
+          title: payload.title,
+        }, wpConfig);
+        featuredMediaId = media.id;
+        featuredImageUrl = media.source_url;
+      } catch (error) {
+        warnings.push(getMediaUploadWarning("Featured image", error));
+      }
     }
 
     let htmlForPublish = payload.html;
@@ -136,19 +151,25 @@ export async function POST(request: Request) {
 
       for (let index = 0; index < generatedInlineImages.length; index += 1) {
         const generated = generatedInlineImages[index];
-        const media = await uploadFeaturedMedia({
-          imageBase64: generated.imageBase64,
-          mimeType: generated.mimeType,
-          title: `${payload.title} inline image ${index + 1}`,
-          filenameSuggestion: generated.filenameSuggestion,
-          altText: generated.altTextSuggestion,
-        }, wpConfig);
+        try {
+          const media = await uploadFeaturedMedia({
+            imageBase64: generated.imageBase64,
+            mimeType: generated.mimeType,
+            title: `${payload.title} inline image ${index + 1}`,
+            filenameSuggestion: generated.filenameSuggestion,
+            altText: generated.altTextSuggestion,
+          }, wpConfig);
 
-        inlineImages.push({
-          id: media.id,
-          sourceUrl: media.source_url,
-          altText: generated.altTextSuggestion,
-        });
+          inlineImages.push({
+            id: media.id,
+            sourceUrl: media.source_url,
+            altText: generated.altTextSuggestion,
+          });
+        } catch (error) {
+          warnings.push(
+            getMediaUploadWarning(`Inline image ${index + 1}`, error),
+          );
+        }
       }
 
       htmlForPublish = injectInlineImagesIntoHtml(htmlForPublish, inlineImages);
@@ -197,6 +218,7 @@ export async function POST(request: Request) {
       featuredImage: featuredMediaId
         ? { id: featuredMediaId, sourceUrl: featuredImageUrl }
         : null,
+      warnings,
       tokenCharge: {
         charged: tokenCharge.charged,
         amount: TOKEN_COSTS.PUBLISH_POST,

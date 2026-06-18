@@ -37,11 +37,13 @@ type PublishResultState = {
   link: string;
   status: string;
   seoUpdate?: { ok?: boolean };
+  warnings?: string[];
   tokenCharge?: { remaining: number };
 };
 type GoogleDocPublishResultState = {
   title: string;
   link: string;
+  warnings?: string[];
   tokenCharge?: { remaining: number };
 };
 type NewsAutoPublishResultState = {
@@ -166,11 +168,13 @@ function ResultSummary({
   title,
   link,
   status,
+  warnings,
 }: {
   label: string;
   title: string;
   link?: string;
   status?: string;
+  warnings?: string[];
 }) {
   return (
     <div className="panel-muted px-4 py-4">
@@ -179,6 +183,13 @@ function ResultSummary({
         {status ? <span className="badge-info">{status}</span> : null}
       </div>
       <p className="mt-2 text-sm font-semibold text-slate-950">{title}</p>
+      {warnings && warnings.length > 0 ? (
+        <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-900">
+          {warnings.map((warning) => (
+            <p key={warning}>{warning}</p>
+          ))}
+        </div>
+      ) : null}
       {link ? (
         <a
           className="mt-2 block break-all text-xs text-blue-700 underline"
@@ -542,8 +553,10 @@ export default function HomePage() {
         void loadTags(selectedSiteId, false);
       }
       setToast({
-        type: data.seoUpdate?.ok ? "success" : "info",
-        message: `Post #${data.postId} saved.`,
+        type: data.warnings?.length ? "info" : data.seoUpdate?.ok ? "success" : "info",
+        message: data.warnings?.length
+          ? `Post #${data.postId} saved, but media upload was skipped.`
+          : `Post #${data.postId} saved.`,
       });
     } catch (error) {
       setToast({
@@ -593,7 +606,12 @@ export default function HomePage() {
         setNewTagNames("");
         void loadTags(selectedSiteId, false);
       }
-      setToast({ type: "success", message: `Google Doc "${data.title}" published.` });
+      setToast({
+        type: data.warnings?.length ? "info" : "success",
+        message: data.warnings?.length
+          ? `Google Doc "${data.title}" published, but media upload was skipped.`
+          : `Google Doc "${data.title}" published.`,
+      });
     } catch (error) {
       setToast({
         type: "error",
@@ -1164,8 +1182,8 @@ export default function HomePage() {
             </section>
           )}
 
-          {publishResult ? <ResultSummary label="Manual Publish" title={`Post #${publishResult.postId} saved to WordPress`} link={publishResult.link} status={publishResult.status} /> : null}
-          {googleDocPublishResult ? <ResultSummary label="Google Doc" title={googleDocPublishResult.title} link={googleDocPublishResult.link} /> : null}
+          {publishResult ? <ResultSummary label="Manual Publish" title={`Post #${publishResult.postId} saved to WordPress`} link={publishResult.link} status={publishResult.status} warnings={publishResult.warnings} /> : null}
+          {googleDocPublishResult ? <ResultSummary label="Google Doc" title={googleDocPublishResult.title} link={googleDocPublishResult.link} warnings={googleDocPublishResult.warnings} /> : null}
           {newsAutoPublishResult ? <ResultSummary label="News Autopilot" title={`${newsAutoPublishResult.published} published / ${newsAutoPublishResult.failed} failed`} /> : null}
 
           <ArticlePreview html={generatedHtml} links={links} seoProvider={seoProvider} seoPayload={seoPayload} hasGeneratedImage={Boolean(generatedImage)} />
