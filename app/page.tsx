@@ -306,10 +306,17 @@ export default function HomePage() {
     );
   };
 
-  const loadCategories = async (siteId: string, showToastOnError = false) => {
+  const loadCategories = async (
+    siteId: string,
+    showToastOnError = false,
+    signal?: AbortSignal,
+  ) => {
     try {
       setIsLoadingCategories(true);
-      const response = await fetch(`/api/wp-categories?siteId=${encodeURIComponent(siteId)}`);
+      const response = await fetch(
+        `/api/wp-categories?siteId=${encodeURIComponent(siteId)}`,
+        { signal },
+      );
       if (!response.ok) throw new Error(await getApiError(response));
       const data = (await response.json()) as { categories: CategoryOption[] };
       const nextCategories = data.categories || [];
@@ -318,6 +325,7 @@ export default function HomePage() {
         current.filter((id) => nextCategories.some((category) => category.id === id)),
       );
     } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") return;
       if (showToastOnError) {
         setToast({
           type: "error",
@@ -326,14 +334,21 @@ export default function HomePage() {
         });
       }
     } finally {
-      setIsLoadingCategories(false);
+      if (!signal?.aborted) setIsLoadingCategories(false);
     }
   };
 
-  const loadTags = async (siteId: string, showToastOnError = false) => {
+  const loadTags = async (
+    siteId: string,
+    showToastOnError = false,
+    signal?: AbortSignal,
+  ) => {
     try {
       setIsLoadingTags(true);
-      const response = await fetch(`/api/wp-tags?siteId=${encodeURIComponent(siteId)}`);
+      const response = await fetch(
+        `/api/wp-tags?siteId=${encodeURIComponent(siteId)}`,
+        { signal },
+      );
       if (!response.ok) throw new Error(await getApiError(response));
       const data = (await response.json()) as { tags: TagOption[] };
       const nextTags = data.tags || [];
@@ -342,6 +357,7 @@ export default function HomePage() {
         current.filter((id) => nextTags.some((tag) => tag.id === id)),
       );
     } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") return;
       if (showToastOnError) {
         setToast({
           type: "error",
@@ -350,7 +366,7 @@ export default function HomePage() {
         });
       }
     } finally {
-      setIsLoadingTags(false);
+      if (!signal?.aborted) setIsLoadingTags(false);
     }
   };
 
@@ -381,8 +397,10 @@ export default function HomePage() {
     }
     setSelectedCategoryIds([]);
     setSelectedTagIds([]);
-    void loadCategories(selectedSiteId, false);
-    void loadTags(selectedSiteId, false);
+    const controller = new AbortController();
+    void loadCategories(selectedSiteId, false, controller.signal);
+    void loadTags(selectedSiteId, false, controller.signal);
+    return () => controller.abort();
   }, [selectedSiteId]);
 
   const syncBalance = (remaining?: number) => {

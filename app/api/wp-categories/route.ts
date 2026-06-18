@@ -8,6 +8,7 @@ import { getUserWordPressConfig } from "@/lib/user-wordpress";
 export const runtime = "nodejs";
 
 const createCategorySchema = z.object({
+  siteId: z.string().trim().min(1).optional(),
   name: z.string().trim().min(1).max(80),
 });
 
@@ -38,7 +39,7 @@ export async function POST(request: Request) {
       );
     }
 
-    const wpConfig = await getUserWordPressConfig(user.id, json.siteId || undefined);
+    const wpConfig = await getUserWordPressConfig(user.id, validation.data.siteId);
     const category = await createCategory(validation.data.name, wpConfig);
     return NextResponse.json({ category });
   } catch (error) {

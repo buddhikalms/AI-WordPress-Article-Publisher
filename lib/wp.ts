@@ -139,6 +139,19 @@ const isHtmlResponse = (response: Response, parsedBody: unknown) => {
   return typeof parsedBody === "string" && parsedBody.trim().startsWith("<!DOCTYPE html");
 };
 
+const getWpErrorMessage = (status: number, path: string) => {
+  if (status === 401) {
+    return `WordPress rejected the saved credentials for ${path}. Check the selected site's WordPress username and application password.`;
+  }
+  if (status === 403 && path.includes("/wp/v2/media")) {
+    return "WordPress refused the media upload. Check that the selected site user can upload files.";
+  }
+  if (status === 403) {
+    return `WordPress refused permission for ${path}. Check the selected site's user role and REST API permissions.`;
+  }
+  return `WordPress request failed (${status}) for ${path}.`;
+};
+
 const wpRequest = async <T>(
   path: string,
   init: RequestInit = {},
@@ -181,7 +194,7 @@ const wpRequest = async <T>(
   if (!response.ok) {
     throw new WpApiError(
       response.status,
-      `WordPress request failed (${response.status}) for ${path}.`,
+      getWpErrorMessage(response.status, path),
       parsedBody,
     );
   }
@@ -334,12 +347,12 @@ export const getSeoDiagnosticPosts = async (config?: WpConfig) => {
 
 export const listCategories = async (config?: WpConfig) => {
   const query =
-    "/wp-json/wp/v2/categories?per_page=100&orderby=name&order=asc&context=edit&_fields=id,name,slug,count";
+    "/wp-json/wp/v2/categories?per_page=100&orderby=name&order=asc&context=view&_fields=id,name,slug,count";
   return wpRequest<WpCategory[]>(query, { method: "GET" }, config);
 };
 
 export const getCategoryByName = async (name: string, config?: WpConfig) => {
-  const query = `/wp-json/wp/v2/categories?search=${encodeURIComponent(name)}&per_page=100&context=edit&_fields=id,name,slug,count`;
+  const query = `/wp-json/wp/v2/categories?search=${encodeURIComponent(name)}&per_page=100&context=view&_fields=id,name,slug,count`;
   const results = await wpRequest<WpCategory[]>(query, { method: "GET" }, config);
   const needle = name.trim().toLowerCase();
   return (
@@ -369,12 +382,12 @@ export const ensureCategory = async (name: string, config?: WpConfig) => {
 
 export const listTags = async (config?: WpConfig) => {
   const query =
-    "/wp-json/wp/v2/tags?per_page=100&orderby=name&order=asc&context=edit&_fields=id,name,slug,count";
+    "/wp-json/wp/v2/tags?per_page=100&orderby=name&order=asc&context=view&_fields=id,name,slug,count";
   return wpRequest<WpTag[]>(query, { method: "GET" }, config);
 };
 
 export const getTagByName = async (name: string, config?: WpConfig) => {
-  const query = `/wp-json/wp/v2/tags?search=${encodeURIComponent(name)}&per_page=100&context=edit&_fields=id,name,slug,count`;
+  const query = `/wp-json/wp/v2/tags?search=${encodeURIComponent(name)}&per_page=100&context=view&_fields=id,name,slug,count`;
   const results = await wpRequest<WpTag[]>(query, { method: "GET" }, config);
   const needle = name.trim().toLowerCase();
   return results.find((tag) => tag.name.trim().toLowerCase() === needle) || null;
