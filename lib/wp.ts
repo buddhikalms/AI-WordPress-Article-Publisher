@@ -139,17 +139,56 @@ const isHtmlResponse = (response: Response, parsedBody: unknown) => {
   return typeof parsedBody === "string" && parsedBody.trim().startsWith("<!DOCTYPE html");
 };
 
-const getWpErrorMessage = (status: number, path: string) => {
+const buildHttpsUpgradeUrl = (url: string) => {
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol !== "http:") {
+      return null;
+    }
+    if (["localhost", "127.0.0.1", "::1"].includes(parsed.hostname)) {
+      return null;
+    }
+    parsed.protocol = "https:";
+    return parsed.toString();
+  } catch {
+    return null;
+  }
+};
+
+const getWpResponseMessage = (details: unknown) => {
+  if (!details || typeof details !== "object") {
+    return "";
+  }
+
+  const body = details as { code?: unknown; message?: unknown };
+  const message = typeof body.message === "string" ? body.message.trim() : "";
+  const code = typeof body.code === "string" ? body.code.trim() : "";
+  if (message && code) {
+    return `${message} (${code})`;
+  }
+  return message || code;
+};
+
+const getWpErrorMessage = (status: number, path: string, details?: unknown) => {
+  const responseMessage = getWpResponseMessage(details);
   if ((status === 401 || status === 403) && path.includes("/wp/v2/media")) {
-    return "WordPress refused the media upload. The saved login can be valid while the selected WordPress user, REST rules, or security plugin blocks uploading files.";
+    return responseMessage
+      ? `WordPress refused the media upload: ${responseMessage}`
+      : "WordPress refused the media upload. The saved login can be valid while the selected WordPress user, REST rules, or security plugin blocks uploading files.";
   }
   if (status === 401) {
-    return `WordPress rejected the saved credentials for ${path}. Check the selected site's WordPress username and application password.`;
+    return responseMessage
+      ? `WordPress rejected authentication for ${path}: ${responseMessage}`
+      : `WordPress rejected authentication for ${path}. Check the selected site's WordPress URL, username, and application password.`;
   }
   if (status === 403) {
-    return `WordPress refused permission for ${path}. Check the selected site's user role and REST API permissions.`;
+    return responseMessage
+      ? `WordPress refused permission for ${path}: ${responseMessage}`
+      : `WordPress refused permission for ${path}. Check the selected site's user role and REST API permissions.`;
   }
-  return `WordPress request failed (${status}) for ${path}.`;
+  return responseMessage
+    ? `WordPress request failed (${status}) for ${path}: ${responseMessage}`
+    : `WordPress request failed (${status}) for ${path}.`;
 };
 
 const wpRequest = async <T>(
@@ -182,6 +221,21 @@ const wpRequest = async <T>(
   const primaryUrl = buildWpUrl(path, config);
   let { response, parsedBody } = await tryRequest(primaryUrl);
 
+  if (response.status === 401) {
+    const httpsUrl = buildHttpsUpgradeUrl(primaryUrl);
+    if (httpsUrl && httpsUrl !== primaryUrl) {
+      try {
+        const httpsAttempt = await tryRequest(httpsUrl);
+        if (httpsAttempt.response.status !== 401) {
+          response = httpsAttempt.response;
+          parsedBody = httpsAttempt.parsedBody;
+        }
+      } catch {
+        // Keep the original WordPress response when the HTTPS retry cannot connect.
+      }
+    }
+  }
+
   if (isHtmlResponse(response, parsedBody)) {
     const fallbackUrl = buildFallbackWpUrl(path, config);
     if (fallbackUrl) {
@@ -194,7 +248,7 @@ const wpRequest = async <T>(
   if (!response.ok) {
     throw new WpApiError(
       response.status,
-      getWpErrorMessage(response.status, path),
+      getWpErrorMessage(response.status, path, parsedBody),
       parsedBody,
     );
   }

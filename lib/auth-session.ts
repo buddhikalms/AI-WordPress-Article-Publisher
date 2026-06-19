@@ -2,11 +2,11 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { HttpError } from "@/lib/errors";
 import { prisma } from "@/lib/prisma";
-import { enforceSingleDeviceAccount, getDeviceIdFromRequest } from "@/lib/device";
 
 export const getCurrentSession = async () => getServerSession(authOptions);
 
 export const requireSessionUser = async (request?: Request) => {
+  void request;
   const session = await getCurrentSession();
   const userId = session?.user?.id;
 
@@ -28,14 +28,6 @@ export const requireSessionUser = async (request?: Request) => {
 
   if (!user) {
     throw new HttpError(401, "User account no longer exists.");
-  }
-
-  if (request) {
-    await enforceSingleDeviceAccount({
-      userId: user.id,
-      deviceId: getDeviceIdFromRequest(request),
-      userAgent: request.headers.get("user-agent"),
-    });
   }
 
   return user;

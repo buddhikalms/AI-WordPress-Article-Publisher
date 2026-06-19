@@ -17,10 +17,6 @@ type AdminUser = {
   emailVerified: string | null;
   tokenBalance: number;
   createdAt: string;
-  deviceRegistration: {
-    deviceId: string;
-    lastSeenAt: string;
-  } | null;
   wordpressSites: Array<{
     id: string;
     name: string;
@@ -283,7 +279,7 @@ export default function AdminPage() {
   const filteredUsers = useMemo(
     () =>
       users.filter((user) => {
-        const matchesSearch = `${user.email || ""} ${user.name || ""} ${user.deviceRegistration?.deviceId || ""}`
+        const matchesSearch = `${user.email || ""} ${user.name || ""}`
           .toLowerCase()
           .includes(userSearch.toLowerCase());
         const matchesRole = userRoleFilter === "all" || user.role === userRoleFilter;
@@ -331,7 +327,7 @@ export default function AdminPage() {
               <div className="panel-muted px-4 py-4">
                 <p className="eyebrow">Users</p>
                 <p className="mt-2 text-xl font-semibold text-slate-950">{users.length}</p>
-                <p className="mt-1 text-xs text-slate-500">All registered accounts and active device sessions.</p>
+                <p className="mt-1 text-xs text-slate-500">All registered accounts with multi-device access.</p>
               </div>
               <div className="panel-muted px-4 py-4">
                 <p className="eyebrow">Packages</p>
@@ -537,7 +533,7 @@ export default function AdminPage() {
 
           <section className="panel overflow-hidden">
             <div className="table-toolbar">
-              <input className="input md:max-w-xs" value={userSearch} onChange={(event) => setUserSearch(event.target.value)} placeholder="Search users or devices" />
+              <input className="input md:max-w-xs" value={userSearch} onChange={(event) => setUserSearch(event.target.value)} placeholder="Search users" />
               <select className="select md:max-w-[180px]" value={userRoleFilter} onChange={(event) => setUserRoleFilter(event.target.value)}>
                 <option value="all">All roles</option>
                 <option value="ADMIN">Admins</option>
@@ -559,7 +555,6 @@ export default function AdminPage() {
                         <th>Tokens</th>
                         <th>Verified</th>
                         <th>WordPress</th>
-                        <th>Device</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -573,7 +568,6 @@ export default function AdminPage() {
                           <td>{user.tokenBalance}</td>
                           <td><span className={user.emailVerified ? "badge-success" : "badge-warning"}>{user.emailVerified ? "Verified" : "Pending"}</span></td>
                           <td>{user.wordpressSites[0]?.baseUrl || "-"}{user._count.wordpressSites > 1 ? ` (+${user._count.wordpressSites - 1})` : ""}</td>
-                          <td>{user.deviceRegistration?.deviceId.slice(0, 12) || "-"}</td>
                         </tr>
                       ))}
                     </tbody>

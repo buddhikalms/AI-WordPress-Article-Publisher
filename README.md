@@ -16,7 +16,7 @@ The main purpose of the project is to reduce the time between content idea and l
 - NewsData-powered news autopublishing with AI rewriting and fresh image generation.
 - Yoast and AIOSEO metadata support for SEO title, meta description, focus keyword, canonical URL, Open Graph, and Twitter metadata.
 - Multi-site WordPress management in the SaaS app, including a default publishing target.
-- User registration, credentials login, Google OAuth login, email verification, and device locking.
+- User registration, credentials login, Google OAuth login, email verification, and concurrent multi-device access.
 - Token-based usage billing with Stripe checkout and webhook-based token crediting.
 - Admin panel for users, packages, and token adjustments.
 - Standalone WordPress plugin with Studio, Credentials, Documentation, and MCP-compatible WordPress publishing tools.
@@ -57,7 +57,7 @@ The SaaS application is the full commercial version of the project. It supports 
 ### SaaS Features
 
 - **Authentication:** credentials login, Google login, registration, email verification, protected sessions.
-- **Device lock:** one account per device and one device per account.
+- **Multi-device access:** one user account can stay signed in on multiple devices at the same time.
 - **WordPress site management:** save multiple WordPress sites, choose a default site, and publish to a selected site.
 - **Manual article studio:** generate articles from briefs, keywords, tone, links, and SEO settings.
 - **Google Doc import:** publish a prepared Google Doc directly into WordPress.
@@ -463,7 +463,7 @@ wp-content/mu-plugins/yoast-rest-meta.php
 
 - WordPress credentials are encrypted before storage in the SaaS database.
 - Credentials login requires email verification.
-- Device registration restricts account/device reuse.
+- Account access is protected by verified credentials or Google OAuth and supports concurrent device sessions.
 - Admin pages are role-protected.
 - Publishing requests require authenticated users.
 - WordPress publishing uses WordPress Application Passwords.
@@ -479,7 +479,7 @@ wp-content/mu-plugins/yoast-rest-meta.php
 - Google Doc links must be public, shared as "Anyone with the link can view", or published to the web.
 - If a Google Doc does not provide `featured_image_url`, the first embedded image can become the featured image.
 - News Autopilot uses NewsData. The default endpoint can be overridden with `NEWSDATA_BASE_URL`.
-- The standalone plugin does not include SaaS auth, billing, token accounting, device lock, or multi-site account management.
+- The standalone plugin does not include SaaS auth, billing, token accounting, or multi-site account management.
 
 ## Development Commands
 

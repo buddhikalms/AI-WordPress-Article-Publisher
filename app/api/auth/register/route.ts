@@ -5,7 +5,6 @@ import { toErrorResponse, HttpError } from "@/lib/errors";
 import { prisma } from "@/lib/prisma";
 import { encryptSecret } from "@/lib/crypto";
 import { issueVerificationCode } from "@/lib/email-verification";
-import { getDeviceIdFromRequest } from "@/lib/device";
 
 export const runtime = "nodejs";
 
@@ -34,12 +33,6 @@ export async function POST(request: Request) {
 
     const payload = parsed.data;
     const email = payload.email.toLowerCase();
-    const deviceId = getDeviceIdFromRequest(request);
-
-    if (!deviceId) {
-      throw new HttpError(400, "Device identifier is missing. Refresh and try again.");
-    }
-
     const existingUser = await prisma.user.findUnique({
       where: { email },
       select: { id: true },
@@ -47,19 +40,6 @@ export async function POST(request: Request) {
 
     if (existingUser) {
       throw new HttpError(409, "An account already exists for this email.");
-    }
-
-    const existingDevice = await prisma.deviceRegistration.findUnique({
-      where: {
-        deviceId,
-      },
-      select: {
-        id: true,
-      },
-    });
-
-    if (existingDevice) {
-      throw new HttpError(409, "This device is already linked to another account.");
     }
 
     const passwordHash = await hash(payload.password, 12);
@@ -89,14 +69,6 @@ export async function POST(request: Request) {
           },
         });
       }
-
-      await tx.deviceRegistration.create({
-        data: {
-          userId: user.id,
-          deviceId,
-          userAgent: request.headers.get("user-agent")?.slice(0, 500) || null,
-        },
-      });
 
       return user;
     });

@@ -19,12 +19,6 @@ export async function GET(request: Request) {
         emailVerified: true,
         tokenBalance: true,
         createdAt: true,
-        deviceRegistration: {
-          select: {
-            deviceId: true,
-            lastSeenAt: true,
-          },
-        },
         wordpressSites: {
           select: {
             id: true,
