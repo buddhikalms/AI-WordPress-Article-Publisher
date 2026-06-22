@@ -75,3 +75,48 @@ export const sendVerificationCodeEmail = async (params: {
     html,
   });
 };
+
+export const sendContactInquiryEmail = async (params: {
+  name: string;
+  email: string;
+  company?: string;
+  websiteUrl?: string;
+  inquiryType: string;
+  message: string;
+}) => {
+  const recipient = process.env.CONTACT_NOTIFICATION_EMAIL;
+  if (!recipient) return false;
+
+  const smtp = getSmtpConfig();
+  const transport = getTransporter();
+  const text = [
+    `New ${params.inquiryType} inquiry`,
+    `Name: ${params.name}`,
+    `Email: ${params.email}`,
+    `Company: ${params.company || "Not provided"}`,
+    `Website: ${params.websiteUrl || "Not provided"}`,
+    "",
+    params.message,
+  ].join("\n");
+
+  await transport.sendMail({
+    from: smtp.from,
+    to: recipient,
+    replyTo: params.email,
+    subject: `[AI Article Publisher] ${params.inquiryType}`,
+    text,
+  });
+  return true;
+};
+
+export const sendPasswordResetCodeEmail = async (params: { email: string; name?: string | null; code: string }) => {
+  const smtp = getSmtpConfig();
+  const transport = getTransporter();
+  const greeting = params.name?.trim() ? `Hi ${params.name.trim()},` : "Hi,";
+  await transport.sendMail({
+    from: smtp.from,
+    to: params.email,
+    subject: "Reset your AI Article Publisher password",
+    text: [greeting, "", `Your password reset code is: ${params.code}`, "This code expires in 15 minutes.", "", "If you did not request this, you can ignore this email."].join("\n"),
+  });
+};

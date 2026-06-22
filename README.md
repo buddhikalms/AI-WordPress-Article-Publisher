@@ -78,7 +78,8 @@ http://localhost:3000
 Important pages:
 
 - `/login` - sign in, register, and verify email.
-- `/` - main workspace for manual generation, Google Doc import, and news autopublishing.
+- `/` - public marketing website.
+- `/app/dashboard` - authenticated workspace for manual generation, Google Doc import, and news autopublishing.
 - `/account` - manage profile, password, connected WordPress sites, and default site.
 - `/billing` - view token balance, buy packages, and review purchase history.
 - `/admin` - admin-only user, package, and token management.

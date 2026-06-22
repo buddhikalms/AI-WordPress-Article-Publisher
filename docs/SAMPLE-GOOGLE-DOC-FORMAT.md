@@ -47,3 +47,8 @@ SEO notes:
 - AI-generated SEO title is capped at 60 characters.
 - AI-generated meta, Open Graph, and Twitter descriptions are capped at 155 characters.
 - If `featured_image_url` is blank, the first image embedded in the doc is uploaded and set as the featured image.
+
+GLB - nFeqMVEYPjkXHqSrxLR0GPPy
+
+UKBL - EZM4o3IE0sk7RkAtNgWvllmb
+LBN - IQCwWpN2K96tHbvHkojnUD1O

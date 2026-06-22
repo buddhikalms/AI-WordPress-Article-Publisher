@@ -80,6 +80,16 @@ export const resendVerificationSchema = z.object({
   email: z.string().trim().email(),
 });
 
+export const forgotPasswordSchema = z.object({
+  email: z.string().trim().email(),
+});
+
+export const resetPasswordSchema = z.object({
+  email: z.string().trim().email(),
+  code: z.string().trim().regex(/^\d{6}$/, "Enter the 6-digit reset code."),
+  password: z.string().min(8, "Password must be at least 8 characters.").max(128),
+});
+
 export const wordpressSiteSchema = z.object({
   siteId: z.preprocess(emptyToUndefined, z.string().trim().min(1).optional()),
   siteName: z.string().trim().min(2).max(80),

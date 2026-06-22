@@ -3,9 +3,9 @@ import "@/app/globals.css";
 import Providers from "@/components/Providers";
 
 export const metadata: Metadata = {
-  title: "AI WordPress Article Publisher",
+  title: "AI Article Publisher | SEO-ready WordPress content with AI",
   description:
-    "Generate AI articles and featured images, then publish with AIOSEO or Yoast metadata via WordPress REST API.",
+    "Generate articles, images, SEO metadata, Google Doc imports, and news-based drafts, then publish directly to WordPress.",
 };
 
 export default function RootLayout({

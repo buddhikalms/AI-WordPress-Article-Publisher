@@ -41,14 +41,14 @@ type IconProps = SVGProps<SVGSVGElement> & {
 };
 
 const isItemActive = (pathname: string, href: string) => {
-  if (href === "/") {
-    return pathname === "/";
+  if (href === "/app/dashboard") {
+    return pathname === "/app/dashboard";
   }
   return pathname === href || pathname.startsWith(`${href}/`);
 };
 
 const fallbackGroup = (href: string) => {
-  if (href === "/") {
+  if (href === "/app/dashboard") {
     return "Workspace";
   }
   if (href.startsWith("/billing")) {
@@ -61,7 +61,7 @@ const fallbackGroup = (href: string) => {
 };
 
 const fallbackIcon = (href: string): DashboardIcon => {
-  if (href === "/") {
+  if (href === "/app/dashboard") {
     return "workspace";
   }
   if (href.startsWith("/billing")) {

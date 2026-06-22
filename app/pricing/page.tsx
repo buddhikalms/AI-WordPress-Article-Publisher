@@ -1,0 +1,16 @@
+import type { Metadata } from "next";
+import { Check, Minus } from "lucide-react";
+import PublicPage from "@/components/public/PublicPage";
+import PageHero from "@/components/public/PageHero";
+import PricingCard from "@/components/public/PricingCard";
+import FAQAccordion from "@/components/public/FAQAccordion";
+
+export const metadata: Metadata = { title: "Pricing | AI Article Publisher", description: "Compare Starter, Pro, and Agency plans for AI-powered WordPress publishing." };
+const plans = [
+  { name: "Starter", price: "$19", description: "For individual publishers building a reliable content rhythm.", features: ["1 user", "1 WordPress site", "Manual article generation", "Featured images"] },
+  { name: "Pro", price: "$49", description: "For content teams using multiple production workflows.", features: ["Multiple WordPress sites", "Google Doc import", "News Autopilot", "Up to 10 in-post images"], featured: true },
+  { name: "Agency", price: "$129", description: "For agencies delivering content across a client portfolio.", features: ["Many WordPress sites", "Higher token allowance", "Priority support", "White-label ready"] },
+] as const;
+const rows = [["WordPress sites", "1", "Multiple", "Many"], ["Google Doc import", false, true, true], ["News Autopilot", false, true, true], ["SEO metadata", true, true, true], ["Priority support", false, false, true]] as const;
+const faqs = [["How do tokens work?", "Generation, images, and publishing consume transparent token amounts. Your balance and transaction history remain visible."], ["Can I change plans?", "Yes. Packages are designed so you can add capacity as your publishing operation grows."], ["Is there a contract?", "The displayed launch plans are monthly and intended without a long-term contract."], ["Are these final prices?", "These are current launch placeholders and should be connected to production Stripe prices before launch."]] as const;
+export default function PricingPage() { return <PublicPage><PageHero eyebrow="Pricing" title="A plan for every stage of your publishing operation" description="Start with the workflow you need now and add capacity as your sites, team, and publishing volume grow." /><section className="py-20"><div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8"><div className="grid gap-5 lg:grid-cols-3">{plans.map((plan) => <PricingCard key={plan.name} {...plan} />)}</div><div className="mt-16 overflow-hidden rounded-2xl border border-slate-200"><div className="grid grid-cols-4 bg-slate-950 px-4 py-4 text-[10px] font-bold uppercase tracking-wider text-white"><span>Capability</span><span>Starter</span><span>Pro</span><span>Agency</span></div>{rows.map(([label, ...values]) => <div key={label} className="grid grid-cols-4 items-center border-t border-slate-200 px-4 py-4 text-xs"><span className="font-medium text-slate-700">{label}</span>{values.map((value, index) => <span key={index} className="text-slate-600">{typeof value === "boolean" ? value ? <Check className="h-4 w-4 text-emerald-600" /> : <Minus className="h-4 w-4 text-slate-300" /> : value}</span>)}</div>)}</div><div className="mx-auto mt-16 max-w-3xl"><h2 className="mb-7 text-center text-2xl font-semibold text-slate-950">Pricing questions</h2><FAQAccordion items={faqs} /></div></div></section></PublicPage>; }

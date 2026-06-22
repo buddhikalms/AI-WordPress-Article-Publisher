@@ -242,7 +242,7 @@ export default function AccountPage() {
       tokenBalance={account.user.tokenBalance}
       navItems={
         [
-          { href: "/", label: "Workspace", hint: "Drafts, imports, and autopilot", group: "Workspace", icon: "workspace" },
+          { href: "/app/dashboard", label: "Workspace", hint: "Drafts, imports, and autopilot", group: "Workspace", icon: "workspace" },
           { href: "/billing", label: "Billing", hint: "Packages and purchases", group: "Revenue", icon: "billing" },
           { href: "/account", label: "Account", hint: "Profile, password, and sites", group: "Settings", icon: "sites" },
           { href: "/admin", label: "Admin", hint: "Platform administration", visible: account.user.role === "ADMIN", group: "Operations", icon: "admin" },

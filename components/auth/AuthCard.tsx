@@ -1,0 +1,2 @@
+import type { ReactNode } from "react";
+export default function AuthCard({ title, description, children, footer }: { title: string; description: string; children: ReactNode; footer?: ReactNode }) { return <div><h1 className="text-2xl font-semibold tracking-[-0.04em] text-slate-950">{title}</h1><p className="mt-2 text-sm leading-6 text-slate-600">{description}</p><div className="mt-7">{children}</div>{footer ? <div className="mt-6 border-t border-slate-200 pt-5 text-center text-xs text-slate-600">{footer}</div> : null}</div>; }

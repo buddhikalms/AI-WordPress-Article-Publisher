@@ -53,6 +53,7 @@ model User {
   tokenTransactions  TokenTransaction[]
   generationUsages   GenerationUsage[]
   emailVerifications EmailVerificationCode[]
+  passwordResets      PasswordResetCode[]
 }
 
 model WordPressCredential {
@@ -204,4 +205,35 @@ model VerificationToken {
   expires    DateTime
 
   @@unique([identifier, token])
+}
+
+model ContactInquiry {
+  id          String   @id @default(cuid())
+  name        String
+  email       String
+  company     String?
+  websiteUrl  String?
+  inquiryType String
+  message     String   @db.Text
+  status      String   @default("NEW")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([status, createdAt])
+  @@index([email, createdAt])
+}
+
+model PasswordResetCode {
+  id         String    @id @default(cuid())
+  userId     String
+  email      String
+  codeHash   String
+  expiresAt  DateTime
+  consumedAt DateTime?
+  createdAt  DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([email, createdAt])
+  @@index([userId, createdAt])
 }

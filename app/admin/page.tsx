@@ -314,7 +314,7 @@ export default function AdminPage() {
       navItems={
         [
           { href: "/admin", label: "Admin", hint: "Platform administration", group: "Operations", icon: "admin" },
-          { href: "/", label: "Workspace", hint: "Content operations", group: "Workspace", icon: "workspace" },
+          { href: "/app/dashboard", label: "Workspace", hint: "Content operations", group: "Workspace", icon: "workspace" },
           { href: "/billing", label: "Billing", hint: "Customer packages", group: "Revenue", icon: "billing" },
           { href: "/account", label: "Account", hint: "Profile settings", group: "Settings", icon: "sites" },
         ] satisfies DashboardNavItem[]

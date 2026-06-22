@@ -198,7 +198,7 @@ export default function BillingPage() {
       tokenBalance={tokenBalance}
       navItems={
         [
-          { href: "/", label: "Workspace", hint: "Generate and publish content", group: "Workspace", icon: "workspace" },
+          { href: "/app/dashboard", label: "Workspace", hint: "Generate and publish content", group: "Workspace", icon: "workspace" },
           { href: "/billing", label: "Billing", hint: "Packages and purchases", group: "Revenue", icon: "billing" },
           { href: "/account", label: "Sites", hint: "Connected WordPress sites", group: "Settings", icon: "sites" },
           { href: "/admin", label: "Admin", hint: "Users and package management", visible: role === "ADMIN", group: "Operations", icon: "admin" },
