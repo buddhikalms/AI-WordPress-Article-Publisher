@@ -38,6 +38,26 @@ export interface WpTag {
   count?: number;
 }
 
+const normalizeWpBaseUrl = (value: string) => {
+  const trimmed = value.trim().replace(/\/+$/, "");
+
+  try {
+    const url = new URL(trimmed);
+    url.pathname = url.pathname
+      .replace(/\/wp-json(?:\/.*)?$/i, "")
+      .replace(/\/index\.php$/i, "")
+      .replace(/\/+$/, "");
+    url.search = "";
+    url.hash = "";
+    return url.toString().replace(/\/+$/, "");
+  } catch {
+    return trimmed
+      .replace(/\/wp-json(?:\/.*)?$/i, "")
+      .replace(/\/index\.php$/i, "")
+      .replace(/\/+$/, "");
+  }
+};
+
 const getWpConfig = (override?: WpConfig): WpConfig => {
   if (override) {
     if (!override.baseUrl.trim() || !override.username.trim() || !override.appPassword.trim()) {
@@ -45,7 +65,7 @@ const getWpConfig = (override?: WpConfig): WpConfig => {
     }
 
     return {
-      baseUrl: override.baseUrl.trim().replace(/\/+$/, ""),
+      baseUrl: normalizeWpBaseUrl(override.baseUrl),
       username: override.username.trim(),
       appPassword: override.appPassword.trim(),
     };
@@ -62,7 +82,7 @@ const getWpConfig = (override?: WpConfig): WpConfig => {
     );
   }
 
-  return { baseUrl: baseUrl.replace(/\/+$/, ""), username, appPassword };
+  return { baseUrl: normalizeWpBaseUrl(baseUrl), username, appPassword };
 };
 
 const buildWpUrl = (path: string, config?: WpConfig) => {
@@ -89,18 +109,13 @@ const splitPathAndQuery = (path: string) => {
   };
 };
 
-const buildFallbackWpUrl = (path: string, config?: WpConfig) => {
-  const { baseUrl } = getWpConfig(config);
-  if (/^https?:\/\//i.test(path)) {
-    return null;
-  }
-  const { pathname, queryString } = splitPathAndQuery(path);
-  if (!pathname.startsWith("/wp-json/")) {
-    return null;
-  }
-
-  const restRoute = pathname.replace(/^\/wp-json/, "") || "/";
-  const url = new URL(`${baseUrl}/index.php`);
+const buildRestRouteFallbackUrl = (
+  baseUrl: string,
+  restRoute: string,
+  queryString: string,
+  includeIndex: boolean,
+) => {
+  const url = new URL(includeIndex ? `${baseUrl}/index.php` : `${baseUrl}/`);
   url.searchParams.set("rest_route", restRoute.startsWith("/") ? restRoute : `/${restRoute}`);
 
   if (queryString) {
@@ -111,6 +126,25 @@ const buildFallbackWpUrl = (path: string, config?: WpConfig) => {
   }
 
   return url.toString();
+};
+
+const buildFallbackWpUrls = (path: string, config?: WpConfig) => {
+  const { baseUrl } = getWpConfig(config);
+  if (/^https?:\/\//i.test(path)) {
+    return [];
+  }
+  const { pathname, queryString } = splitPathAndQuery(path);
+  if (!pathname.startsWith("/wp-json/")) {
+    return [];
+  }
+
+  const restRoute = pathname.replace(/^\/wp-json/, "") || "/";
+  return Array.from(
+    new Set([
+      buildRestRouteFallbackUrl(baseUrl, restRoute, queryString, false),
+      buildRestRouteFallbackUrl(baseUrl, restRoute, queryString, true),
+    ]),
+  );
 };
 
 const buildAuthHeader = (config?: WpConfig) => {
@@ -136,7 +170,11 @@ const isHtmlResponse = (response: Response, parsedBody: unknown) => {
   if (contentType.includes("text/html")) {
     return true;
   }
-  return typeof parsedBody === "string" && parsedBody.trim().startsWith("<!DOCTYPE html");
+  if (typeof parsedBody !== "string") {
+    return false;
+  }
+  const sample = parsedBody.trimStart().slice(0, 80).toLowerCase();
+  return sample.startsWith("<!doctype html") || sample.startsWith("<html") || sample.includes("<head");
 };
 
 const buildHttpsUpgradeUrl = (url: string) => {
@@ -198,6 +236,9 @@ const wpRequest = async <T>(
 ): Promise<T> => {
   const headers = new Headers(init.headers);
   headers.set("Authorization", buildAuthHeader(config));
+  if (!headers.has("Accept")) {
+    headers.set("Accept", "application/json");
+  }
 
   const body = init.body;
   const hasBinaryBody =
@@ -237,12 +278,27 @@ const wpRequest = async <T>(
   }
 
   if (isHtmlResponse(response, parsedBody)) {
-    const fallbackUrl = buildFallbackWpUrl(path, config);
-    if (fallbackUrl) {
+    const fallbackUrls = buildFallbackWpUrls(path, config);
+    for (const fallbackUrl of fallbackUrls) {
       const fallbackAttempt = await tryRequest(fallbackUrl);
       response = fallbackAttempt.response;
       parsedBody = fallbackAttempt.parsedBody;
+      if (!isHtmlResponse(response, parsedBody)) {
+        break;
+      }
     }
+  }
+
+  if (isHtmlResponse(response, parsedBody)) {
+    throw new WpApiError(
+      502,
+      "WordPress returned HTML for the REST API request. The app tried both /wp-json and ?rest_route= fallbacks, so check the saved site URL, REST API availability, rewrite rules, and any firewall or security plugin blocking REST requests.",
+      {
+        path,
+        status: response.status,
+        sample: typeof parsedBody === "string" ? parsedBody.slice(0, 300) : null,
+      },
+    );
   }
 
   if (!response.ok) {
@@ -256,7 +312,7 @@ const wpRequest = async <T>(
   if (typeof parsedBody === "string") {
     throw new WpApiError(
       502,
-      "WordPress REST API returned HTML instead of JSON. If /wp-json is not enabled, use plain permalinks with rest_route or fix rewrite rules.",
+      "WordPress REST API returned text instead of JSON. Check the saved site URL, REST API availability, rewrite rules, and any firewall or security plugin blocking REST requests.",
       {
         path,
         sample: parsedBody.slice(0, 300),
@@ -295,6 +351,7 @@ export const uploadFeaturedMedia = async (params: {
   title: string;
   filenameSuggestion?: string;
   altText?: string;
+  caption?: string;
 }, config?: WpConfig) => {
   const filenameInput =
     params.filenameSuggestion?.replace(/\.[a-z0-9]+$/i, "") || params.title;
@@ -317,15 +374,24 @@ export const uploadFeaturedMedia = async (params: {
     body: bytes,
   }, config);
 
+  const mediaUpdate: Record<string, unknown> = {};
+  if (params.title.trim()) {
+    mediaUpdate.title = params.title.trim();
+  }
   if (params.altText?.trim()) {
+    mediaUpdate.alt_text = params.altText.trim();
+  }
+  if (params.caption?.trim()) {
+    mediaUpdate.caption = params.caption.trim();
+  }
+
+  if (Object.keys(mediaUpdate).length > 0) {
     try {
       await wpRequest<Record<string, unknown>>(
         `/wp-json/wp/v2/media/${uploaded.id}`,
         {
           method: "POST",
-          body: JSON.stringify({
-            alt_text: params.altText.trim(),
-          }),
+          body: JSON.stringify(mediaUpdate),
         },
         config,
       );
@@ -465,3 +531,5 @@ export const ensureTag = async (name: string, config?: WpConfig) => {
   }
   return createTag(normalized, config);
 };
+
+

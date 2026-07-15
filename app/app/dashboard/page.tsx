@@ -41,10 +41,23 @@ type PublishResultState = {
   tokenCharge?: { remaining: number };
 };
 type GoogleDocPublishResultState = {
+  postId?: number;
   title: string;
   link: string;
+  status?: string;
   warnings?: string[];
   tokenCharge?: { remaining: number };
+};
+type SitePublishOutcome = {
+  siteId: string;
+  siteName: string;
+  ok: boolean;
+  postId?: number;
+  title: string;
+  link?: string;
+  status?: string;
+  warnings?: string[];
+  error?: string;
 };
 type NewsAutoPublishResultState = {
   published: number;
@@ -212,6 +225,7 @@ export default function DashboardPage() {
   const [account, setAccount] = useState<AccountSummaryState | null>(null);
   const [accountLoadError, setAccountLoadError] = useState<string | null>(null);
   const [selectedSiteId, setSelectedSiteId] = useState("");
+  const [selectedSiteIds, setSelectedSiteIds] = useState<string[]>([]);
   const [categories, setCategories] = useState<CategoryOption[]>([]);
   const [selectedCategoryIds, setSelectedCategoryIds] = useState<number[]>([]);
   const [newCategoryName, setNewCategoryName] = useState("");
@@ -244,9 +258,9 @@ export default function DashboardPage() {
   const [newsMaxArticles, setNewsMaxArticles] = useState(1);
   const [newsPublishMode, setNewsPublishMode] = useState<PublishMode>("publish");
   const [newsScheduledAtLocal, setNewsScheduledAtLocal] = useState("");
-  const [publishResult, setPublishResult] = useState<PublishResultState | null>(null);
-  const [googleDocPublishResult, setGoogleDocPublishResult] =
-    useState<GoogleDocPublishResultState | null>(null);
+  const [publishResults, setPublishResults] = useState<SitePublishOutcome[]>([]);
+  const [googleDocPublishResults, setGoogleDocPublishResults] =
+    useState<SitePublishOutcome[]>([]);
   const [newsAutoPublishResult, setNewsAutoPublishResult] =
     useState<NewsAutoPublishResultState | null>(null);
   const [isGeneratingDraft, setIsGeneratingDraft] = useState(false);
@@ -258,19 +272,32 @@ export default function DashboardPage() {
   const [isLoadingTags, setIsLoadingTags] = useState(false);
 
   const selectedSite = account?.wordpressSites.find((site) => site.id === selectedSiteId) ?? null;
+  const selectedSites = useMemo(
+    () =>
+      account?.wordpressSites.filter((site) => selectedSiteIds.includes(site.id)) ?? [],
+    [account?.wordpressSites, selectedSiteIds],
+  );
   const hasSiteConfigured = (account?.wordpressSites.length || 0) > 0;
   const isBusy =
     isGeneratingDraft || isGeneratingImage || isPublishing || isPublishingGoogleDoc || isAutoPublishingNews;
   const keywordsCount = parseKeywords(keywords).length;
   const currentSlug = slugifyArticle(title);
+  const selectedCategoryNames = categories
+    .filter((category) => selectedCategoryIds.includes(category.id))
+    .map((category) => category.name);
+  const selectedTagNames = tags
+    .filter((tag) => selectedTagIds.includes(tag.id))
+    .map((tag) => tag.name);
 
   const stats = useMemo(
     () => [
       {
-        label: "Active Site",
-        value: selectedSite?.name || "Not selected",
-        hint: selectedSite ? selectedSite.baseUrl : "Choose a publishing target to unlock actions.",
-        badge: selectedSite?.isDefault ? "Default" : undefined,
+        label: "Destinations",
+        value: `${selectedSites.length}`,
+        hint: selectedSites.length
+          ? selectedSites.map((site) => site.name).join(", ")
+          : "Choose one or more publishing destinations.",
+        badge: selectedSites.length > 1 ? "Bulk" : undefined,
       },
       {
         label: "Keyword Set",
@@ -285,7 +312,7 @@ export default function DashboardPage() {
         hint: excerpt.trim() ? "Summary ready for publish." : "Summary appears after generation.",
       },
     ],
-    [currentSlug, excerpt, keywordsCount, selectedSite, seoPayload.focusKeyword, title],
+    [currentSlug, excerpt, keywordsCount, selectedSites, seoPayload.focusKeyword, title],
   );
 
   const loadAccount = async () => {
@@ -315,6 +342,13 @@ export default function DashboardPage() {
         ? current
         : data.defaultWordpressSite?.id || data.wordpressSites?.[0]?.id || "",
     );
+    setSelectedSiteIds((current) => {
+      const availableIds = new Set((data.wordpressSites || []).map((site) => site.id));
+      const retained = current.filter((id) => availableIds.has(id));
+      if (retained.length > 0) return retained;
+      const initialId = data.defaultWordpressSite?.id || data.wordpressSites?.[0]?.id;
+      return initialId ? [initialId] : [];
+    });
   };
 
   const loadCategories = async (
@@ -419,6 +453,18 @@ export default function DashboardPage() {
     setAccount((current) => (current ? { ...current, tokenBalance: remaining } : current));
   };
 
+  const toggleDestination = (siteId: string) => {
+    if (selectedSiteIds.includes(siteId)) {
+      const next = selectedSiteIds.filter((id) => id !== siteId);
+      setSelectedSiteIds(next);
+      if (selectedSiteId === siteId) setSelectedSiteId(next[0] || "");
+      return;
+    }
+
+    setSelectedSiteIds([...selectedSiteIds, siteId]);
+    if (!selectedSiteId) setSelectedSiteId(siteId);
+  };
+
   const handleGenerateDraft = async () => {
     try {
       if (!title.trim() || !brief.trim()) throw new Error("Title and topic brief are required.");
@@ -426,8 +472,8 @@ export default function DashboardPage() {
         throw new Error("Focus keyword is required before draft generation.");
       }
       setIsGeneratingDraft(true);
-      setPublishResult(null);
-      setGoogleDocPublishResult(null);
+      setPublishResults([]);
+      setGoogleDocPublishResults([]);
       setNewsAutoPublishResult(null);
       const response = await fetch("/api/generate-article", {
         method: "POST",
@@ -509,41 +555,69 @@ export default function DashboardPage() {
 
   const handlePublishPost = async () => {
     try {
-      if (!selectedSiteId) throw new Error("Select a WordPress site before publishing.");
+      if (selectedSites.length === 0) {
+        throw new Error("Select at least one WordPress destination before publishing.");
+      }
       if (!generatedHtml.trim()) throw new Error("Generate a draft before publishing.");
       if (!excerpt.trim()) throw new Error("Excerpt is required before publishing.");
       if (publishMode === "future" && !scheduledAtLocal.trim()) {
         throw new Error("Select a future schedule date/time first.");
       }
       setIsPublishing(true);
-      const response = await fetch("/api/publish", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          siteId: selectedSiteId,
-          title: title.trim(),
-          brief: brief.trim(),
-          html: generatedHtml,
-          excerpt: excerpt.trim(),
-          status: publishMode,
-          scheduledAt:
-            publishMode === "future" ? toIsoFromLocalDateTime(scheduledAtLocal) : undefined,
-          featuredImageBase64: generatedImage?.imageBase64,
-          featuredImageMime: generatedImage?.mimeType,
-          inPostImageCount,
-          selectedCategoryIds,
-          newCategoryName: newCategoryName.trim(),
-          selectedTagIds,
-          newTagNames,
-          suggestedTags,
-          seoProvider,
-          seoPayload,
-        }),
-      });
-      if (!response.ok) throw new Error(await getApiError(response));
-      const data = (await response.json()) as PublishResultState;
-      setPublishResult(data);
-      syncBalance(data.tokenCharge?.remaining);
+      setPublishResults([]);
+      const outcomes: SitePublishOutcome[] = [];
+      for (const site of selectedSites) {
+        const response = await fetch("/api/publish", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            siteId: site.id,
+            title: title.trim(),
+            brief: brief.trim(),
+            html: generatedHtml,
+            excerpt: excerpt.trim(),
+            status: publishMode,
+            scheduledAt:
+              publishMode === "future" ? toIsoFromLocalDateTime(scheduledAtLocal) : undefined,
+            featuredImageBase64: generatedImage?.imageBase64,
+            featuredImageMime: generatedImage?.mimeType,
+            inPostImageCount,
+            selectedCategoryIds: site.id === selectedSiteId ? selectedCategoryIds : [],
+            selectedCategoryNames,
+            newCategoryName: newCategoryName.trim(),
+            selectedTagIds: site.id === selectedSiteId ? selectedTagIds : [],
+            selectedTagNames,
+            newTagNames,
+            suggestedTags,
+            seoProvider,
+            seoPayload,
+          }),
+        });
+        if (!response.ok) {
+          outcomes.push({
+            siteId: site.id,
+            siteName: site.name,
+            ok: false,
+            title: title.trim(),
+            error: await getApiError(response),
+          });
+          setPublishResults([...outcomes]);
+          continue;
+        }
+        const data = (await response.json()) as PublishResultState;
+        syncBalance(data.tokenCharge?.remaining);
+        outcomes.push({
+          siteId: site.id,
+          siteName: site.name,
+          ok: true,
+          postId: data.postId,
+          title: `Post #${data.postId}`,
+          link: data.link,
+          status: data.status,
+          warnings: data.warnings,
+        });
+        setPublishResults([...outcomes]);
+      }
       if (newCategoryName.trim()) {
         setNewCategoryName("");
         void loadCategories(selectedSiteId, false);
@@ -552,11 +626,13 @@ export default function DashboardPage() {
         setNewTagNames("");
         void loadTags(selectedSiteId, false);
       }
+      const succeeded = outcomes.filter((outcome) => outcome.ok).length;
+      const failed = outcomes.length - succeeded;
       setToast({
-        type: data.warnings?.length ? "info" : data.seoUpdate?.ok ? "success" : "info",
-        message: data.warnings?.length
-          ? `Post #${data.postId} saved, but media upload was skipped.`
-          : `Post #${data.postId} saved.`,
+        type: failed > 0 ? "info" : "success",
+        message: failed > 0
+          ? `Published to ${succeeded} site(s); ${failed} failed.`
+          : `Published to ${succeeded} site(s).`,
       });
     } catch (error) {
       setToast({
@@ -570,34 +646,62 @@ export default function DashboardPage() {
 
   const handlePublishGoogleDoc = async () => {
     try {
-      if (!selectedSiteId) throw new Error("Select a WordPress site before importing a Google Doc.");
+      if (selectedSites.length === 0) {
+        throw new Error("Select at least one WordPress destination before importing a Google Doc.");
+      }
       if (!googleDocInput.trim()) throw new Error("Google Doc URL or ID is required.");
       if (googleDocPublishMode === "future" && !googleDocScheduledAtLocal.trim()) {
         throw new Error("Select a future schedule date/time first.");
       }
       setIsPublishingGoogleDoc(true);
-      const response = await fetch("/api/google-doc-publish", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          siteId: selectedSiteId,
-          document: googleDocInput.trim(),
-          status: googleDocPublishMode,
-          scheduledAt:
-            googleDocPublishMode === "future"
-              ? toIsoFromLocalDateTime(googleDocScheduledAtLocal)
-              : undefined,
-          selectedCategoryIds,
-          newCategoryName: newCategoryName.trim(),
-          selectedTagIds,
-          newTagNames,
-          seoProvider,
-        }),
-      });
-      if (!response.ok) throw new Error(await getApiError(response));
-      const data = (await response.json()) as GoogleDocPublishResultState;
-      setGoogleDocPublishResult(data);
-      syncBalance(data.tokenCharge?.remaining);
+      setGoogleDocPublishResults([]);
+      const outcomes: SitePublishOutcome[] = [];
+      for (const site of selectedSites) {
+        const response = await fetch("/api/google-doc-publish", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            siteId: site.id,
+            document: googleDocInput.trim(),
+            status: googleDocPublishMode,
+            scheduledAt:
+              googleDocPublishMode === "future"
+                ? toIsoFromLocalDateTime(googleDocScheduledAtLocal)
+                : undefined,
+            selectedCategoryIds: site.id === selectedSiteId ? selectedCategoryIds : [],
+            selectedCategoryNames,
+            newCategoryName: newCategoryName.trim(),
+            selectedTagIds: site.id === selectedSiteId ? selectedTagIds : [],
+            selectedTagNames,
+            newTagNames,
+            seoProvider,
+          }),
+        });
+        if (!response.ok) {
+          outcomes.push({
+            siteId: site.id,
+            siteName: site.name,
+            ok: false,
+            title: googleDocInput.trim(),
+            error: await getApiError(response),
+          });
+          setGoogleDocPublishResults([...outcomes]);
+          continue;
+        }
+        const data = (await response.json()) as GoogleDocPublishResultState;
+        syncBalance(data.tokenCharge?.remaining);
+        outcomes.push({
+          siteId: site.id,
+          siteName: site.name,
+          ok: true,
+          postId: data.postId,
+          title: data.title,
+          link: data.link,
+          status: data.status,
+          warnings: data.warnings,
+        });
+        setGoogleDocPublishResults([...outcomes]);
+      }
       if (newCategoryName.trim()) {
         setNewCategoryName("");
         void loadCategories(selectedSiteId, false);
@@ -606,11 +710,13 @@ export default function DashboardPage() {
         setNewTagNames("");
         void loadTags(selectedSiteId, false);
       }
+      const succeeded = outcomes.filter((outcome) => outcome.ok).length;
+      const failed = outcomes.length - succeeded;
       setToast({
-        type: data.warnings?.length ? "info" : "success",
-        message: data.warnings?.length
-          ? `Google Doc "${data.title}" published, but media upload was skipped.`
-          : `Google Doc "${data.title}" published.`,
+        type: failed > 0 ? "info" : "success",
+        message: failed > 0
+          ? `Google Doc published to ${succeeded} site(s); ${failed} failed.`
+          : `Google Doc published to ${succeeded} site(s).`,
       });
     } catch (error) {
       setToast({
@@ -738,24 +844,45 @@ export default function DashboardPage() {
             <div className="section-header">
               <div>
                 <p className="eyebrow">Target Site</p>
-                <h2 className="mt-1 text-sm font-semibold text-slate-950">Publishing destination</h2>
-                <p className="mt-1 text-xs leading-5 text-slate-500">Keep one active target selected so categories and publish actions stay in sync.</p>
+                <h2 className="mt-1 text-sm font-semibold text-slate-950">Publishing destinations</h2>
+                <p className="mt-1 text-xs leading-5 text-slate-500">Select every site that should receive the article. Choose one taxonomy source for browsing categories and tags.</p>
               </div>
-              <Link className="button-muted" href="/account">Manage sites</Link>
+              <div className="flex flex-wrap gap-2">
+                {hasSiteConfigured ? (
+                  <button
+                    type="button"
+                    className="button-muted"
+                    onClick={() => {
+                      const allSelected =
+                        selectedSiteIds.length === account.wordpressSites.length;
+                      if (allSelected) {
+                        setSelectedSiteIds([]);
+                        setSelectedSiteId("");
+                        return;
+                      }
+                      setSelectedSiteIds(account.wordpressSites.map((site) => site.id));
+                      if (!selectedSiteId) setSelectedSiteId(account.wordpressSites[0]?.id || "");
+                    }}
+                  >
+                    {selectedSiteIds.length === account.wordpressSites.length
+                      ? "Clear all"
+                      : "Select all"}
+                  </button>
+                ) : null}
+                <Link className="button-muted" href="/account">Manage sites</Link>
+              </div>
             </div>
 
             {hasSiteConfigured ? (
               <div className="mt-4 grid gap-3 md:grid-cols-2">
                 {account.wordpressSites.map((site) => (
-                  <button
+                  <div
                     key={site.id}
-                    type="button"
                     className={`rounded-2xl border px-4 py-4 text-left transition ${
-                      site.id === selectedSiteId
+                      selectedSiteIds.includes(site.id)
                         ? "border-blue-200 bg-blue-50"
                         : "border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50"
                     }`}
-                    onClick={() => setSelectedSiteId(site.id)}
                   >
                     <div className="flex items-start justify-between gap-3">
                       <div>
@@ -764,11 +891,31 @@ export default function DashboardPage() {
                       </div>
                       {site.isDefault ? <span className="badge-info">Default</span> : null}
                     </div>
-                    <div className="mt-3 flex items-center justify-between gap-2">
+                    <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
                       <span className="text-xs text-slate-500">User: {site.username}</span>
-                      {site.id === selectedSiteId ? <span className="badge-success">Active</span> : null}
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          className={site.id === selectedSiteId ? "badge-success" : "badge-neutral"}
+                          onClick={() => {
+                            setSelectedSiteId(site.id);
+                            setSelectedSiteIds((current) =>
+                              current.includes(site.id) ? current : [...current, site.id],
+                            );
+                          }}
+                        >
+                          {site.id === selectedSiteId ? "Taxonomy source" : "Use taxonomy"}
+                        </button>
+                        <button
+                          type="button"
+                          className={selectedSiteIds.includes(site.id) ? "button-secondary" : "button-muted"}
+                          onClick={() => toggleDestination(site.id)}
+                        >
+                          {selectedSiteIds.includes(site.id) ? "Selected" : "Add"}
+                        </button>
+                      </div>
                     </div>
-                  </button>
+                  </div>
                 ))}
               </div>
             ) : (
@@ -1013,7 +1160,7 @@ export default function DashboardPage() {
                 <div className="mt-4 flex flex-wrap gap-2">
                   <button type="button" className="button-primary" onClick={handleGenerateDraft} disabled={isBusy}>{isGeneratingDraft ? "Generating..." : "Generate draft"}</button>
                   <button type="button" className="button-muted" onClick={handleGenerateImage} disabled={isBusy}>{isGeneratingImage ? "Generating..." : "Generate image"}</button>
-                  <button type="button" className="button-secondary" onClick={handlePublishPost} disabled={isBusy || !selectedSiteId}>{isPublishing ? "Publishing..." : "Publish to WordPress"}</button>
+                  <button type="button" className="button-secondary" onClick={handlePublishPost} disabled={isBusy || selectedSites.length === 0}>{isPublishing ? `Publishing to ${selectedSites.length} site(s)...` : `Publish to ${selectedSites.length || 0} site(s)`}</button>
                 </div>
 
                 {excerpt ? (
@@ -1068,7 +1215,7 @@ export default function DashboardPage() {
               </div>
 
               <div className="mt-4">
-                <button type="button" className="button-secondary" onClick={handlePublishGoogleDoc} disabled={isBusy || !selectedSiteId}>{isPublishingGoogleDoc ? "Publishing..." : "Import and publish"}</button>
+                <button type="button" className="button-secondary" onClick={handlePublishGoogleDoc} disabled={isBusy || selectedSites.length === 0}>{isPublishingGoogleDoc ? `Publishing to ${selectedSites.length} site(s)...` : `Import and publish to ${selectedSites.length || 0} site(s)`}</button>
               </div>
             </section>
           ) : null}
@@ -1127,12 +1274,12 @@ export default function DashboardPage() {
           <section className="panel px-4 py-4">
             <div className="flex items-center justify-between gap-3">
               <div>
-                <p className="eyebrow">Current Target</p>
-                <p className="mt-1 text-sm font-semibold text-slate-950">{selectedSite?.name || "No site selected"}</p>
+                <p className="eyebrow">Bulk Targets</p>
+                <p className="mt-1 text-sm font-semibold text-slate-950">{selectedSites.length ? `${selectedSites.length} site(s) selected` : "No sites selected"}</p>
               </div>
               {selectedSite?.isDefault ? <span className="badge-info">Default</span> : null}
             </div>
-            <p className="mt-2 break-all text-xs leading-5 text-slate-500">{selectedSite?.baseUrl || "Select a site to enable publish actions."}</p>
+            <p className="mt-2 break-all text-xs leading-5 text-slate-500">{selectedSites.length ? selectedSites.map((site) => site.name).join(", ") : "Select one or more sites to enable publish actions."}</p>
             {selectedSite ? (
               <div className="mt-3 grid gap-2 text-xs text-slate-500">
                 <p>User: {selectedSite.username}</p>
@@ -1182,8 +1329,26 @@ export default function DashboardPage() {
             </section>
           )}
 
-          {publishResult ? <ResultSummary label="Manual Publish" title={`Post #${publishResult.postId} saved to WordPress`} link={publishResult.link} status={publishResult.status} warnings={publishResult.warnings} /> : null}
-          {googleDocPublishResult ? <ResultSummary label="Google Doc" title={googleDocPublishResult.title} link={googleDocPublishResult.link} warnings={googleDocPublishResult.warnings} /> : null}
+          {publishResults.map((result) => (
+            <ResultSummary
+              key={`manual-${result.siteId}`}
+              label={`Manual Publish · ${result.siteName}`}
+              title={result.ok ? `${result.title} saved to WordPress` : `Failed: ${result.error}`}
+              link={result.link}
+              status={result.ok ? result.status : "failed"}
+              warnings={result.warnings}
+            />
+          ))}
+          {googleDocPublishResults.map((result) => (
+            <ResultSummary
+              key={`google-doc-${result.siteId}`}
+              label={`Google Doc · ${result.siteName}`}
+              title={result.ok ? result.title : `Failed: ${result.error}`}
+              link={result.link}
+              status={result.ok ? result.status : "failed"}
+              warnings={result.warnings}
+            />
+          ))}
           {newsAutoPublishResult ? <ResultSummary label="News Autopilot" title={`${newsAutoPublishResult.published} published / ${newsAutoPublishResult.failed} failed`} /> : null}
 
           <ArticlePreview html={generatedHtml} links={links} seoProvider={seoProvider} seoPayload={seoPayload} hasGeneratedImage={Boolean(generatedImage)} />

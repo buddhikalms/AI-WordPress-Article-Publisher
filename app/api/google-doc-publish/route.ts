@@ -90,7 +90,7 @@ const normalizeImageSourceKey = (value: string) => {
 };
 
 const getImageReplacement = (
-  replacements: Map<string, { sourceUrl: string; altText: string; title: string }>,
+  replacements: Map<string, { sourceUrl: string; altText: string; title: string; caption: string }>,
   src: string,
 ) => {
   const candidates = [
@@ -111,7 +111,7 @@ const getImageReplacement = (
 
 const replaceImageSources = (
   html: string,
-  replacements: Map<string, { sourceUrl: string; altText: string; title: string }>,
+  replacements: Map<string, { sourceUrl: string; altText: string; title: string; caption: string }>,
 ) => {
   return html.replace(/<img\b[^>]*>/gi, (imageTag) => {
     const srcMatch = imageTag.match(/\bsrc\s*=\s*(["'])(.*?)\1/i);
@@ -140,6 +140,17 @@ const replaceImageSources = (
         updated = updated.replace(/\s*\/?>$/, ` ${name}="${escaped}" />`);
       }
     });
+    if (replacement.caption) {
+      const escapedCaption = replacement.caption.replace(/&/g, "&amp;").replace(/"/g, "&quot;");
+      if (new RegExp(`\\bdata-caption\\s*=`, "i").test(updated)) {
+        updated = updated.replace(
+          new RegExp(`\\bdata-caption\\s*=\\s*(["'])(.*?)\\1`, "i"),
+          `data-caption="${escapedCaption}"`,
+        );
+      } else {
+        updated = updated.replace(/\s*\/?>$/, ` data-caption="${escapedCaption}" />`);
+      }
+    }
     return updated;
   });
 };
@@ -203,6 +214,9 @@ const removeImageSourceFromHtml = (html: string, imageUrl?: string) => {
         if (!new RegExp(`<img\\b[^>]*\\bsrc\\s*=\\s*(["'])${quotedUrl}\\1`, "i").test(block)) {
           return block;
         }
+        if (tagName === "figure") {
+          return "";
+        }
         const withoutImages = block.replace(/<img\b[^>]*>/gi, "");
         return stripHtml(withoutImages) ? withoutImages : "";
       },
@@ -254,10 +268,14 @@ export async function POST(request: Request) {
     }
 
     const categoryIds = new Set<number>(payload.selectedCategoryIds);
-    const categoryNames = new Set<string>(draft.categories);
+    const categoryNames = new Set<string>([
+      ...draft.categories,
+      ...payload.selectedCategoryNames,
+    ]);
     const tagIds = new Set<number>(payload.selectedTagIds);
     const tagNames = new Set<string>([
       ...draft.tags,
+      ...payload.selectedTagNames,
       ...payload.newTagNames,
     ]);
     const warnings: string[] = [];
@@ -277,17 +295,18 @@ export async function POST(request: Request) {
 
     const docImages: typeof draft.images = draft.images.length > 0
       ? draft.images
-      : draft.imageUrls.map((url) => ({ url, altText: "", title: "" }));
+      : draft.imageUrls.map((url) => ({ url, altText: "", title: "", caption: "" }));
     const uploadedDocImages: Array<{
       originalUrl: string;
       id: number;
       sourceUrl: string;
       altText: string;
       title: string;
+      caption: string;
     }> = [];
     const imageSourceReplacements = new Map<
       string,
-      { sourceUrl: string; altText: string; title: string }
+      { sourceUrl: string; altText: string; title: string; caption: string }
     >();
     const skippedImageSources = new Set<string>();
 
@@ -302,9 +321,11 @@ export async function POST(request: Request) {
             }
           : await fetchImageAsBase64(originalUrl);
       const mediaTitle = docImage.title || docImage.altText || `${draft.title} image ${index + 1}`;
+      const caption = docImage.caption || "";
       const altText =
         docImage.altText ||
         docImage.title ||
+        docImage.caption ||
         (index === 0
           ? `Featured image for ${draft.title}`
           : `Image ${index + 1} for ${draft.title}`);
@@ -317,6 +338,7 @@ export async function POST(request: Request) {
             title: mediaTitle,
             filenameSuggestion: `${draft.slug || "google-doc"}-${index + 1}`,
             altText,
+            caption,
           },
           wpConfig,
         );
@@ -333,16 +355,19 @@ export async function POST(request: Request) {
         sourceUrl: uploaded.source_url,
         altText,
         title: mediaTitle,
+        caption,
       });
       imageSourceReplacements.set(originalUrl, {
         sourceUrl: uploaded.source_url,
         altText,
         title: mediaTitle,
+        caption,
       });
       imageSourceReplacements.set(normalizeImageSourceKey(originalUrl), {
         sourceUrl: uploaded.source_url,
         altText,
         title: mediaTitle,
+        caption,
       });
     }
 

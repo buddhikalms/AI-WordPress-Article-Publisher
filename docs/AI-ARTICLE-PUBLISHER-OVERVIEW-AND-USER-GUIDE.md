@@ -132,6 +132,18 @@ The NextAuth session strategy is JWT. Application roles are `USER` and `ADMIN`. 
 
 Each user may save multiple sites. The combination of user and base URL is unique. Deleting a site removes its stored credentials but does not delete content already published to WordPress.
 
+### 5.3.1 Bulk Publishing To Multiple Sites
+
+The dashboard can publish a generated Manual Studio article or one imported from Google Docs to several connected WordPress sites in one run.
+
+1. In **Publishing destinations**, add every site that should receive the article.
+2. Choose one site as the **Taxonomy source**. Its categories and tags are shown in the publishing rules.
+3. Generate the article or enter the Google Doc link.
+4. Choose draft, immediate publish, or a scheduled time.
+5. Start publishing and review the result shown for each destination.
+
+Category and tag IDs are local to each WordPress installation. During a bulk run, selected taxonomy is matched or created by name on secondary sites instead of reusing IDs from the taxonomy source. A failure on one destination does not stop the remaining sites. Publishing tokens are charged separately for each successful destination.
+
 ### 5.4 Manual Article Workflow
 
 1. Select the destination site.

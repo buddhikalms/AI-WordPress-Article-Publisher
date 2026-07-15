@@ -62,8 +62,10 @@ export interface PublishRequest {
   featuredImageMime?: string;
   inPostImageCount?: number;
   selectedCategoryIds?: number[];
+  selectedCategoryNames?: string[];
   newCategoryName?: string;
   selectedTagIds?: number[];
+  selectedTagNames?: string[];
   newTagNames?: string[] | string;
   suggestedTags?: string[];
   seoProvider: SEOProvider;

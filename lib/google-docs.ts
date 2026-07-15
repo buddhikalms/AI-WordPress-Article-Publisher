@@ -27,6 +27,7 @@ export interface GoogleDocImage {
   url: string;
   altText: string;
   title: string;
+  caption: string;
   imageBase64?: string;
   mimeType?: string;
 }
@@ -83,6 +84,9 @@ const allowedMetadataKeys = new Set([
   "tags",
   "tag",
 ]);
+
+const imageMetadataKeys = new Set(["title", "alt", "alt_text", "caption"]);
+type ImageMetadataKey = "title" | "alt" | "caption";
 
 const escapeHtml = (value: string) =>
   value
@@ -419,6 +423,115 @@ const getHtmlAttribute = (html: string, attribute: string) => {
   return match ? decodeHtmlAttribute(match[2]).trim() : "";
 };
 
+const extractImageMetadataLine = (html: string) => {
+  const text = htmlToText(html);
+  const match = text.match(/^([^:]{1,40}):\s*(.+)$/);
+  if (!match) {
+    return null;
+  }
+
+  const key = normalizeMetadataKey(match[1]);
+  if (!imageMetadataKeys.has(key)) {
+    return null;
+  }
+
+  return {
+    key: (key === "alt_text" ? "alt" : key) as ImageMetadataKey,
+    value: match[2].trim(),
+  };
+};
+
+const setGenericHtmlAttribute = (tag: string, attribute: string, value: string) => {
+  const escaped = escapeHtml(value);
+  const pattern = new RegExp(`\\s*\\b${attribute}\\s*=\\s*(["'])(.*?)\\1`, "i");
+  const withoutAttribute = tag.replace(pattern, "");
+  return withoutAttribute.replace(/\s*\/?>$/, ` ${attribute}="${escaped}" />`);
+};
+
+const applyMetadataToImageBlock = (
+  imageBlock: string,
+  metadata: { title?: string; alt?: string; caption?: string },
+) => {
+  let updated = imageBlock.replace(/<img\b[^>]*>/i, (imageTag) => {
+    let image = imageTag;
+    if (metadata.alt) {
+      image = setGenericHtmlAttribute(image, "alt", metadata.alt);
+    }
+    if (metadata.title) {
+      image = setGenericHtmlAttribute(image, "title", metadata.title);
+    }
+    if (metadata.caption) {
+      image = setGenericHtmlAttribute(image, "data-caption", metadata.caption);
+    }
+    return image;
+  });
+
+  if (!metadata.caption || /<figcaption\b/i.test(updated)) {
+    return updated;
+  }
+
+  const caption = `<figcaption>${escapeHtml(metadata.caption)}</figcaption>`;
+  if (/^<figure\b/i.test(updated)) {
+    return updated.replace(/<\/figure>\s*$/i, `${caption}</figure>`);
+  }
+  return `<figure class="wp-block-image">${updated}${caption}</figure>`;
+};
+
+const applyGoogleDocImageMetadataBlocks = (html: string) => {
+  const blockPattern = /<(p|div|figure)\b[^>]*>[\s\S]*?<\/\1>/gi;
+  const parts: string[] = [];
+  let cursor = 0;
+  let match: RegExpExecArray | null;
+  let pending: { title?: string; alt?: string; caption?: string } = {};
+  let pendingBlocks: string[] = [];
+
+  const flushPending = () => {
+    if (pendingBlocks.length > 0) {
+      parts.push(pendingBlocks.join(""));
+      pendingBlocks = [];
+    }
+    pending = {};
+  };
+
+  while ((match = blockPattern.exec(html))) {
+    const before = html.slice(cursor, match.index);
+    if (before.trim()) {
+      flushPending();
+    }
+    parts.push(before);
+
+    const block = match[0];
+    const metadataLine = extractImageMetadataLine(block);
+    if (metadataLine) {
+      pending[metadataLine.key] = metadataLine.value;
+      pendingBlocks.push(block);
+      cursor = blockPattern.lastIndex;
+      continue;
+    }
+
+    if (/<img\b/i.test(block) && Object.keys(pending).length > 0) {
+      pendingBlocks = [];
+      parts.push(applyMetadataToImageBlock(block, pending));
+      pending = {};
+      cursor = blockPattern.lastIndex;
+      continue;
+    }
+
+    flushPending();
+    parts.push(block);
+    cursor = blockPattern.lastIndex;
+  }
+
+  const rest = html.slice(cursor);
+  if (rest.trim()) {
+    flushPending();
+  }
+  parts.push(rest);
+  flushPending();
+
+  return parts.join("");
+};
+
 const normalizeHtmlImageUrl = (rawSrc: string, baseUrl: string) => {
   if (!rawSrc || parseInlineBase64ImageSource(rawSrc)) {
     return "";
@@ -468,6 +581,7 @@ const extractImageItemsFromHtml = (html: string, baseUrl: string) => {
         url: key,
         altText: getHtmlAttribute(imageTag, "alt"),
         title: getHtmlAttribute(imageTag, "title"),
+        caption: getHtmlAttribute(imageTag, "data-caption"),
         imageBase64: inlineImage.imageBase64,
         mimeType: inlineImage.mimeType,
       });
@@ -483,6 +597,7 @@ const extractImageItemsFromHtml = (html: string, baseUrl: string) => {
       url,
       altText: getHtmlAttribute(imageTag, "alt"),
       title: getHtmlAttribute(imageTag, "title"),
+      caption: getHtmlAttribute(imageTag, "data-caption"),
     });
   }
 
@@ -860,7 +975,9 @@ const normalizeGoogleDocHtml = (html: string, baseUrl: string) =>
           convertInlineStyledHeadings(
             removeGoogleDocMetadataBlocks(
               stripFrontMatterFromHtml(
-                stripGoogleDocChrome(inlineGoogleDocClassStyles(extractBodyHtml(html), html)),
+                applyGoogleDocImageMetadataBlocks(
+                  stripGoogleDocChrome(inlineGoogleDocClassStyles(extractBodyHtml(html), html)),
+                ),
               ),
             ),
           ).replace(
@@ -975,7 +1092,7 @@ export const readGoogleDocPost = async (input: { document: string }) => {
       ])
     : [];
   const featuredImage = parsed.featuredImageUrl
-    ? { url: parsed.featuredImageUrl, altText: "", title: "" }
+    ? { url: parsed.featuredImageUrl, altText: "", title: "", caption: "" }
     : htmlImages[0];
   const images = mergeImageItems([
     ...(featuredImage ? [featuredImage] : []),

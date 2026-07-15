@@ -107,9 +107,15 @@ export async function POST(request: Request) {
     const tagIds = new Set<number>(payload.selectedTagIds);
     const warnings: string[] = [];
     const tagNames = new Set<string>([
+      ...payload.selectedTagNames,
       ...payload.newTagNames,
       ...payload.suggestedTags,
     ]);
+
+    for (const name of payload.selectedCategoryNames) {
+      const createdOrExistingCategory = await ensureCategory(name, wpConfig);
+      categoryIds.add(createdOrExistingCategory.id);
+    }
 
     if (payload.newCategoryName?.trim()) {
       const createdOrExistingCategory = await ensureCategory(
