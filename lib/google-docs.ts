@@ -462,7 +462,7 @@ const applyMetadataToImageBlock = (
   imageBlock: string,
   metadata: { title?: string; alt?: string; caption?: string },
 ) => {
-  let updated = imageBlock.replace(/<img\b[^>]*>/i, (imageTag) => {
+  const updated = imageBlock.replace(/<img\b[^>]*>/i, (imageTag) => {
     let image = imageTag;
     if (metadata.alt) {
       image = setGenericHtmlAttribute(image, "alt", metadata.alt);
