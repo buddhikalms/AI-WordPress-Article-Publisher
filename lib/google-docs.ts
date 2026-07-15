@@ -482,52 +482,77 @@ const applyGoogleDocImageMetadataBlocks = (html: string) => {
   const parts: string[] = [];
   let cursor = 0;
   let match: RegExpExecArray | null;
-  let pending: { title?: string; alt?: string; caption?: string } = {};
-  let pendingBlocks: string[] = [];
+  let leadingMetadata: { title?: string; alt?: string; caption?: string } = {};
+  let leadingMetadataBlocks: string[] = [];
+  let pendingImageBlock = "";
+  let trailingMetadata: { title?: string; alt?: string; caption?: string } = {};
 
-  const flushPending = () => {
-    if (pendingBlocks.length > 0) {
-      parts.push(pendingBlocks.join(""));
-      pendingBlocks = [];
+  const flushLeadingMetadata = () => {
+    if (leadingMetadataBlocks.length > 0) {
+      parts.push(leadingMetadataBlocks.join(""));
+      leadingMetadataBlocks = [];
     }
-    pending = {};
+    leadingMetadata = {};
+  };
+
+  const flushPendingImage = () => {
+    if (!pendingImageBlock) {
+      return;
+    }
+
+    parts.push(applyMetadataToImageBlock(pendingImageBlock, trailingMetadata));
+    pendingImageBlock = "";
+    trailingMetadata = {};
   };
 
   while ((match = blockPattern.exec(html))) {
     const before = html.slice(cursor, match.index);
     if (before.trim()) {
-      flushPending();
+      flushLeadingMetadata();
+      flushPendingImage();
     }
     parts.push(before);
 
     const block = match[0];
     const metadataLine = extractImageMetadataLine(block);
     if (metadataLine) {
-      pending[metadataLine.key] = metadataLine.value;
-      pendingBlocks.push(block);
+      if (pendingImageBlock) {
+        trailingMetadata[metadataLine.key] = metadataLine.value;
+      } else {
+        leadingMetadata[metadataLine.key] = metadataLine.value;
+        leadingMetadataBlocks.push(block);
+      }
       cursor = blockPattern.lastIndex;
       continue;
     }
 
-    if (/<img\b/i.test(block) && Object.keys(pending).length > 0) {
-      pendingBlocks = [];
-      parts.push(applyMetadataToImageBlock(block, pending));
-      pending = {};
+    if (/<img\b/i.test(block)) {
+      flushPendingImage();
+      if (Object.keys(leadingMetadata).length > 0) {
+        leadingMetadataBlocks = [];
+        parts.push(applyMetadataToImageBlock(block, leadingMetadata));
+        leadingMetadata = {};
+      } else {
+        pendingImageBlock = block;
+      }
       cursor = blockPattern.lastIndex;
       continue;
     }
 
-    flushPending();
+    flushLeadingMetadata();
+    flushPendingImage();
     parts.push(block);
     cursor = blockPattern.lastIndex;
   }
 
   const rest = html.slice(cursor);
   if (rest.trim()) {
-    flushPending();
+    flushLeadingMetadata();
+    flushPendingImage();
   }
+  flushLeadingMetadata();
+  flushPendingImage();
   parts.push(rest);
-  flushPending();
 
   return parts.join("");
 };
