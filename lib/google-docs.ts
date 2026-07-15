@@ -423,6 +423,16 @@ const getHtmlAttribute = (html: string, attribute: string) => {
   return match ? decodeHtmlAttribute(match[2]).trim() : "";
 };
 
+const pickHtmlAttribute = (html: string, attributes: string[]) => {
+  for (const attribute of attributes) {
+    const value = getHtmlAttribute(html, attribute);
+    if (value) {
+      return value;
+    }
+  }
+  return "";
+};
+
 const extractImageMetadataLine = (html: string) => {
   const text = htmlToText(html);
   const match = text.match(/^([^:]{1,40}):\s*(.+)$/);
@@ -594,6 +604,21 @@ const extractImageItemsFromHtml = (html: string, baseUrl: string) => {
 
   while ((match = imagePattern.exec(html))) {
     const imageTag = match[0];
+    const blockStart = html.lastIndexOf("<", match.index - 1);
+    const blockEnd = html.indexOf(">", imagePattern.lastIndex);
+    const nearbyHtml =
+      blockStart >= 0 && blockEnd >= imagePattern.lastIndex
+        ? html.slice(blockStart, blockEnd + 1)
+        : imageTag;
+    const altText =
+      pickHtmlAttribute(imageTag, ["alt", "aria-label", "data-alt"]) ||
+      pickHtmlAttribute(nearbyHtml, ["alt", "aria-label", "data-alt"]);
+    const title =
+      pickHtmlAttribute(imageTag, ["title", "data-title"]) ||
+      pickHtmlAttribute(nearbyHtml, ["title", "data-title"]);
+    const caption =
+      pickHtmlAttribute(imageTag, ["data-caption"]) ||
+      pickHtmlAttribute(nearbyHtml, ["data-caption"]);
     const rawSrc = getHtmlAttribute(imageTag, "src");
     const inlineImage = parseInlineBase64ImageSource(rawSrc);
     if (inlineImage) {
@@ -604,9 +629,9 @@ const extractImageItemsFromHtml = (html: string, baseUrl: string) => {
       seen.add(key);
       images.push({
         url: key,
-        altText: getHtmlAttribute(imageTag, "alt"),
-        title: getHtmlAttribute(imageTag, "title"),
-        caption: getHtmlAttribute(imageTag, "data-caption"),
+        altText,
+        title,
+        caption,
         imageBase64: inlineImage.imageBase64,
         mimeType: inlineImage.mimeType,
       });
@@ -620,9 +645,9 @@ const extractImageItemsFromHtml = (html: string, baseUrl: string) => {
     seen.add(url);
     images.push({
       url,
-      altText: getHtmlAttribute(imageTag, "alt"),
-      title: getHtmlAttribute(imageTag, "title"),
-      caption: getHtmlAttribute(imageTag, "data-caption"),
+      altText,
+      title,
+      caption,
     });
   }
 
@@ -1035,13 +1060,26 @@ const isGoogleDocHtmlExportComplete = (html: string, fallbackHtml: string) => {
 };
 
 const mergeImageItems = (items: GoogleDocImage[]) => {
-  const seen = new Set<string>();
+  const indexByUrl = new Map<string, number>();
   const merged: GoogleDocImage[] = [];
   for (const item of items) {
-    if (!item.url || seen.has(item.url)) {
+    if (!item.url) {
       continue;
     }
-    seen.add(item.url);
+    const existingIndex = indexByUrl.get(item.url);
+    if (existingIndex !== undefined) {
+      const existing = merged[existingIndex];
+      merged[existingIndex] = {
+        ...existing,
+        altText: existing.altText || item.altText,
+        title: existing.title || item.title,
+        caption: existing.caption || item.caption,
+        imageBase64: existing.imageBase64 || item.imageBase64,
+        mimeType: existing.mimeType || item.mimeType,
+      };
+      continue;
+    }
+    indexByUrl.set(item.url, merged.length);
     merged.push(item);
   }
   return merged;
