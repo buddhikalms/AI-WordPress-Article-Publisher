@@ -453,6 +453,132 @@ export const updatePost = async (
   }, config);
 };
 
+export interface WpPostSummary {
+  id: number;
+  link: string;
+  status: string;
+  title: string;
+  excerpt: string;
+  slug: string;
+  date: string;
+  modified: string;
+  author: number;
+  featuredMediaId: number;
+  categories: number[];
+  tags: number[];
+}
+
+export interface WpPostDetail extends WpPostSummary {
+  content: string;
+}
+
+interface WpRawPostFields {
+  id: number;
+  link: string;
+  status: string;
+  slug: string;
+  date: string;
+  modified: string;
+  author: number;
+  featured_media?: number;
+  categories?: number[];
+  tags?: number[];
+  title?: { rendered?: string } | string;
+  excerpt?: { rendered?: string } | string;
+  content?: { rendered?: string } | string;
+}
+
+const renderedField = (value: { rendered?: string } | string | undefined) => {
+  if (typeof value === "string") {
+    return value;
+  }
+  return value?.rendered ?? "";
+};
+
+const POST_SUMMARY_FIELDS =
+  "id,link,status,title,excerpt,slug,date,modified,author,featured_media,categories,tags";
+
+const mapWpPostSummary = (raw: WpRawPostFields): WpPostSummary => ({
+  id: raw.id,
+  link: raw.link,
+  status: raw.status,
+  title: renderedField(raw.title),
+  excerpt: renderedField(raw.excerpt),
+  slug: raw.slug,
+  date: raw.date,
+  modified: raw.modified,
+  author: raw.author,
+  featuredMediaId: raw.featured_media || 0,
+  categories: raw.categories || [],
+  tags: raw.tags || [],
+});
+
+export const listPosts = async (
+  params: {
+    status?: string[];
+    search?: string;
+    perPage?: number;
+    page?: number;
+  } = {},
+  config?: WpConfig,
+): Promise<WpPostSummary[]> => {
+  const query = new URLSearchParams();
+  query.set("per_page", String(Math.min(Math.max(params.perPage || 10, 1), 50)));
+  query.set("page", String(Math.max(params.page || 1, 1)));
+  query.set("orderby", "date");
+  query.set("order", "desc");
+  query.set("_fields", POST_SUMMARY_FIELDS);
+  if (params.status && params.status.length > 0) {
+    query.set("status", params.status.join(","));
+  }
+  if (params.search?.trim()) {
+    query.set("search", params.search.trim());
+  }
+
+  const raw = await wpRequest<WpRawPostFields[]>(
+    `/wp-json/wp/v2/posts?${query.toString()}`,
+    { method: "GET" },
+    config,
+  );
+  return raw.map(mapWpPostSummary);
+};
+
+export const searchPosts = async (
+  query: string,
+  options: { status?: string[]; limit?: number } = {},
+  config?: WpConfig,
+) =>
+  listPosts(
+    {
+      search: query,
+      status: options.status,
+      perPage: options.limit,
+    },
+    config,
+  );
+
+export const getPost = async (
+  postId: number,
+  config?: WpConfig,
+): Promise<WpPostDetail> => {
+  const raw = await wpRequest<WpRawPostFields>(
+    `/wp-json/wp/v2/posts/${postId}?_fields=${POST_SUMMARY_FIELDS},content`,
+    { method: "GET" },
+    config,
+  );
+  return {
+    ...mapWpPostSummary(raw),
+    content: renderedField(raw.content),
+  };
+};
+
+export const trashPost = async (postId: number, config?: WpConfig) =>
+  wpRequest<Record<string, unknown>>(
+    `/wp-json/wp/v2/posts/${postId}`,
+    { method: "DELETE" },
+    config,
+  );
+
 export const getCurrentUser = async (config?: WpConfig) => {
   return wpRequest<Record<string, unknown>>("/wp-json/wp/v2/users/me", {
     method: "GET",

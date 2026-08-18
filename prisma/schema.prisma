@@ -54,6 +54,11 @@ model User {
   generationUsages   GenerationUsage[]
   emailVerifications EmailVerificationCode[]
   passwordResets      PasswordResetCode[]
+
+  mcpAuthorizationCodes McpAuthorizationCode[]
+  mcpAccessTokens       McpAccessToken[]
+  mcpRefreshTokens      McpRefreshToken[]
+  mcpActivityLogs       McpActivityLog[]
 }
 
 model WordPressCredential {
@@ -236,4 +241,91 @@ model PasswordResetCode {
 
   @@index([email, createdAt])
   @@index([userId, createdAt])
+}
+
+model McpOAuthClient {
+  id         String   @id @default(cuid())
+  clientId   String   @unique
+  clientName String
+  redirectUris Json
+  createdAt  DateTime @default(now())
+
+  authorizationCodes McpAuthorizationCode[]
+  accessTokens       McpAccessToken[]
+  refreshTokens      McpRefreshToken[]
+}
+
+model McpAuthorizationCode {
+  id                  String    @id @default(cuid())
+  codeHash            String    @unique
+  clientId            String
+  userId              String
+  redirectUri         String
+  codeChallenge        String
+  codeChallengeMethod String
+  scope               String
+  expiresAt           DateTime
+  consumedAt          DateTime?
+  createdAt           DateTime  @default(now())
+
+  client McpOAuthClient @relation(fields: [clientId], references: [clientId], onDelete: Cascade)
+  user   User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([clientId])
+  @@index([userId])
+}
+
+model McpAccessToken {
+  id         String    @id @default(cuid())
+  tokenHash  String    @unique
+  clientId   String
+  userId     String
+  scope      String
+  expiresAt  DateTime
+  createdAt  DateTime  @default(now())
+  lastUsedAt DateTime?
+  revokedAt  DateTime?
+
+  client McpOAuthClient @relation(fields: [clientId], references: [clientId], onDelete: Cascade)
+  user   User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([clientId])
+}
+
+model McpRefreshToken {
+  id        String    @id @default(cuid())
+  tokenHash String    @unique
+  clientId  String
+  userId    String
+  scope     String
+  expiresAt DateTime
+  revokedAt DateTime?
+  createdAt DateTime  @default(now())
+
+  client McpOAuthClient @relation(fields: [clientId], references: [clientId], onDelete: Cascade)
+  user   User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([clientId])
+}
+
+model McpActivityLog {
+  id              String   @id @default(cuid())
+  userId          String
+  clientId        String?
+  tool            String
+  requestId       String?
+  siteId          String?
+  wordpressPostId Int?
+  action          String
+  success         Boolean
+  tokensSpent     Int?
+  errorSummary    String?  @db.Text
+  createdAt       DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@index([tool, createdAt])
 }

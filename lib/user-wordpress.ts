@@ -14,6 +14,23 @@ const siteSummarySelect = {
   isDefault: true,
 } as const;
 
+export type WordPressCredentialSummary = {
+  id: string;
+  name: string;
+  baseUrl: string;
+  username: string;
+  updatedAt: Date;
+  isDefault: boolean;
+};
+
+export type UserWordPressConfig = {
+  id: string;
+  name: string;
+  baseUrl: string;
+  username: string;
+  appPassword: string;
+};
+
 const setDefaultSiteInTransaction = async (
   tx: WordPressCredentialClient,
   userId: string,
@@ -38,7 +55,9 @@ const setDefaultSiteInTransaction = async (
   });
 };
 
-export const listWordPressCredentialSummaries = async (userId: string) =>
+export const listWordPressCredentialSummaries = async (
+  userId: string,
+): Promise<WordPressCredentialSummary[]> =>
   prisma.wordPressCredential.findMany({
     where: {
       userId,
@@ -47,7 +66,9 @@ export const listWordPressCredentialSummaries = async (userId: string) =>
     orderBy: [{ isDefault: "desc" }, { name: "asc" }],
   });
 
-export const getDefaultWordPressCredentialSummary = async (userId: string) =>
+export const getDefaultWordPressCredentialSummary = async (
+  userId: string,
+): Promise<WordPressCredentialSummary | null> =>
   prisma.wordPressCredential.findFirst({
     where: {
       userId,
@@ -58,7 +79,10 @@ export const getDefaultWordPressCredentialSummary = async (userId: string) =>
 
 export const getWordPressCredentialSummary = getDefaultWordPressCredentialSummary;
 
-export const getUserWordPressConfig = async (userId: string, siteId?: string) => {
+export const getUserWordPressConfig = async (
+  userId: string,
+  siteId?: string,
+): Promise<UserWordPressConfig> => {
   const credential = siteId
     ? await prisma.wordPressCredential.findFirst({
         where: {
@@ -97,7 +121,7 @@ export const saveUserWordPressConfig = async (params: {
   username: string;
   appPassword?: string;
   isDefault?: boolean;
-}) => {
+}): Promise<WordPressCredentialSummary> => {
   if (!params.name.trim() || !params.baseUrl.trim() || !params.username.trim()) {
     throw new HttpError(
       400,
@@ -189,7 +213,7 @@ export const saveUserWordPressConfig = async (params: {
 export const setDefaultWordPressSite = async (params: {
   userId: string;
   siteId: string;
-}) =>
+}): Promise<WordPressCredentialSummary> =>
   prisma.$transaction(async (tx) => {
     const site = await tx.wordPressCredential.findFirst({
       where: {

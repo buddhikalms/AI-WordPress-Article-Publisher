@@ -43,6 +43,19 @@ type AdminPackage = {
   isActive: boolean;
 };
 
+type McpLogEntry = {
+  id: string;
+  tool: string;
+  action: string;
+  success: boolean;
+  siteId: string | null;
+  wordpressPostId: number | null;
+  tokensSpent: number | null;
+  errorSummary: string | null;
+  createdAt: string;
+  user: { email: string | null; name: string | null };
+};
+
 type EditablePackageState = {
   id: string;
   name: string;
@@ -63,6 +76,7 @@ export default function AdminPage() {
   const { data: session, status } = useSession();
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [packages, setPackages] = useState<AdminPackage[]>([]);
+  const [mcpLogs, setMcpLogs] = useState<McpLogEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [toast, setToast] = useState<{ type: "success" | "error" | "info"; message: string } | null>(null);
   const [pkgName, setPkgName] = useState("");
@@ -92,13 +106,21 @@ export default function AdminPage() {
   const loadData = async () => {
     setLoading(true);
     try {
-      const [usersRes, packagesRes] = await Promise.all([fetch("/api/admin/users"), fetch("/api/admin/packages")]);
+      const [usersRes, packagesRes, mcpLogsRes] = await Promise.all([
+        fetch("/api/admin/users"),
+        fetch("/api/admin/packages"),
+        fetch("/api/admin/mcp-logs?limit=50"),
+      ]);
       const usersPayload = await usersRes.json();
       const packagesPayload = await packagesRes.json();
       if (!usersRes.ok) throw new Error(usersPayload?.error || "Failed to load users.");
       if (!packagesRes.ok) throw new Error(packagesPayload?.error || "Failed to load packages.");
       setUsers(usersPayload.users || []);
       setPackages(packagesPayload.packages || []);
+      if (mcpLogsRes.ok) {
+        const mcpLogsPayload = await mcpLogsRes.json();
+        setMcpLogs(mcpLogsPayload.logs || []);
+      }
     } catch (err) {
       setToast({
         type: "error",
@@ -575,6 +597,52 @@ export default function AdminPage() {
                 </div>
                 <PaginationControls page={userPage} totalPages={userTotalPages} onPageChange={setUserPage} label="Users" />
               </>
+            )}
+          </section>
+
+          <section className="panel overflow-hidden">
+            <div className="section-header px-4 pt-4 md:px-5">
+              <div>
+                <p className="eyebrow">MCP Activity</p>
+                <h2 className="mt-1 text-sm font-semibold text-slate-950">Recent ChatGPT connector calls</h2>
+              </div>
+            </div>
+            {mcpLogs.length === 0 ? (
+              <div className="px-4 pb-4 pt-3 md:px-5">
+                <EmptyState title="No MCP activity yet" description="Calls made through the ChatGPT connector will appear here." />
+              </div>
+            ) : (
+              <div className="table-scroll">
+                <table className="table">
+                  <thead>
+                    <tr>
+                      <th>Tool</th>
+                      <th>User</th>
+                      <th>Site</th>
+                      <th>Status</th>
+                      <th>Tokens</th>
+                      <th>When</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {mcpLogs.map((log) => (
+                      <tr key={log.id}>
+                        <td>
+                          <p className="font-medium text-slate-900">{log.tool}</p>
+                          {!log.success && log.errorSummary ? (
+                            <p className="mt-1 text-xs text-red-600">{log.errorSummary}</p>
+                          ) : null}
+                        </td>
+                        <td>{log.user.email || log.user.name || "-"}</td>
+                        <td>{log.siteId ? `${log.siteId.slice(0, 8)}...` : "-"}{log.wordpressPostId ? ` #${log.wordpressPostId}` : ""}</td>
+                        <td><span className={log.success ? "badge-success" : "badge-warning"}>{log.success ? "OK" : "Failed"}</span></td>
+                        <td>{log.tokensSpent ?? "-"}</td>
+                        <td>{new Date(log.createdAt).toLocaleString()}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             )}
           </section>
         </div>

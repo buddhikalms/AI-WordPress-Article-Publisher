@@ -508,5 +508,6 @@ npm run typecheck
 ## Documentation Files
 
 - `docs/SAMPLE-GOOGLE-DOC-FORMAT.md` - sample Google Doc front matter and article structure.
+- `docs/CHATGPT-MCP-INTEGRATION.md` - connecting ChatGPT to the SaaS via its MCP server (OAuth, tools, token costs, limitations).
 - `wordpress-plugin/ai-article-publisher/README.md` - plugin-specific overview.
 - `wordpress-plugin/ai-article-publisher/docs/USER-GUIDE.md` - plugin setup and usage guide.

@@ -1,0 +1,19 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://localhost:3000/api/oauth/metadata/authorization-server)",
+      "Bash(break)",
+      "Bash(curl -s http://localhost:3000/.well-known/oauth-authorization-server)",
+      "Bash(curl -s http://localhost:3000/.well-known/oauth-protected-resource)",
+      "Bash(curl -s -X POST http://localhost:3000/api/oauth/register -H \"Content-Type: application/json\" -d '{\"redirect_uris\":[\"http://localhost:9999/callback\"],\"client_name\":\"Smoke Test Client\"}')",
+      "Bash(curl -s -i -X POST http://localhost:3000/api/mcp -H \"Content-Type: application/json\" -d '{}')",
+      "Bash(node \"F:/temp/claude/f--2026---resell-AI-article-Publisher/c6c0ba34-cc69-4592-80bf-2220348bc51e/scratchpad/create-test-user.mjs\")",
+      "Bash(node .tmp-create-test-user.mjs)",
+      "Bash(mysql -h127.0.0.1 -uroot -p'buddhika@LMS2002' ai_aricle_publisher -e \"SELECT tool, action, success, errorSummary, createdAt FROM McpActivityLog ORDER BY createdAt DESC LIMIT 10;\")",
+      "Bash(node .tmp-check-logs.mjs)",
+      "Bash(npx vitest *)",
+      "Bash(rm -rf .next)",
+      "Bash(npm run *)"
+    ]
+  }
+}
