@@ -2,11 +2,8 @@ import { NextResponse } from "next/server";
 import { TokenReason } from "@prisma/client";
 import { HttpError, toErrorResponse } from "@/lib/errors";
 import { newsAutoPublishRequestSchema } from "@/lib/schemas";
-import {
-  generateFeaturedImage,
-  generateInlineArticleImages,
-  rewriteNewsAsOriginalArticle,
-} from "@/lib/openai";
+import { generateFeaturedImage, generateInlineArticleImages } from "@/lib/openai";
+import { rewriteNewsAsOriginalArticle } from "@/lib/ai";
 import { requireVerifiedUser } from "@/lib/auth-session";
 import { getUserWordPressConfig } from "@/lib/user-wordpress";
 import { fetchNewsByCategory } from "@/lib/newsdata";
@@ -21,9 +18,9 @@ import {
 
 export const runtime = "nodejs";
 
-const TOKENS_PER_NEWS_POST =
+const getTokensPerNewsPost = (skipImages: boolean) =>
   TOKEN_COSTS.ARTICLE_GENERATION +
-  TOKEN_COSTS.IMAGE_GENERATION +
+  (skipImages ? 0 : TOKEN_COSTS.IMAGE_GENERATION) +
   TOKEN_COSTS.PUBLISH_POST;
 
 const escapeHtmlAttribute = (value: string) =>
@@ -138,7 +135,8 @@ export async function POST(request: Request) {
       maxArticles: payload.maxArticles,
     });
 
-    const requiredTokens = sourceArticles.length * TOKENS_PER_NEWS_POST;
+    const tokensPerPost = getTokensPerNewsPost(payload.skipImages);
+    const requiredTokens = sourceArticles.length * tokensPerPost;
     if (user.tokenBalance < requiredTokens) {
       throw new HttpError(
         402,
@@ -179,6 +177,8 @@ export async function POST(request: Request) {
           category: payload.category,
           tone: payload.tone,
           wordCount: payload.wordCount,
+          provider: payload.provider,
+          model: payload.model,
         });
         const tagIds = new Set<number>(baseTagIds);
         for (const name of generated.meta.suggestedTags) {
@@ -186,21 +186,24 @@ export async function POST(request: Request) {
           tagIds.add(createdOrExistingTag.id);
         }
 
-        const generatedImage = await generateFeaturedImage({
-          title: generated.meta.title || source.title,
-          brief: generated.meta.excerpt || source.description || source.title,
-        });
-
-        const featuredMedia = await uploadFeaturedMedia(
-          {
-            imageBase64: generatedImage.imageBase64,
-            mimeType: generatedImage.mimeType,
+        let featuredMedia: Awaited<ReturnType<typeof uploadFeaturedMedia>> | null = null;
+        if (!payload.skipImages) {
+          const generatedImage = await generateFeaturedImage({
             title: generated.meta.title || source.title,
-            filenameSuggestion: generatedImage.filenameSuggestion,
-            altText: generatedImage.altTextSuggestion,
-          },
-          wpConfig,
-        );
+            brief: generated.meta.excerpt || source.description || source.title,
+          });
+
+          featuredMedia = await uploadFeaturedMedia(
+            {
+              imageBase64: generatedImage.imageBase64,
+              mimeType: generatedImage.mimeType,
+              title: generated.meta.title || source.title,
+              filenameSuggestion: generatedImage.filenameSuggestion,
+              altText: generatedImage.altTextSuggestion,
+            },
+            wpConfig,
+          );
+        }
 
         let htmlForPublish = generated.html;
         const inlineImages: Array<{
@@ -209,7 +212,7 @@ export async function POST(request: Request) {
           altText?: string;
         }> = [];
 
-        if (payload.inPostImageCount > 0) {
+        if (!payload.skipImages && payload.inPostImageCount > 0) {
           const generatedInlineImages = await generateInlineArticleImages({
             title: generated.meta.title || source.title,
             brief: generated.meta.excerpt || source.description || source.title,
@@ -255,7 +258,7 @@ export async function POST(request: Request) {
             excerpt: generated.meta.excerpt,
             status: payload.status,
             date: scheduledAt,
-            featuredMediaId: featuredMedia.id,
+            featuredMediaId: featuredMedia?.id,
             categories: Array.from(categoryIds),
             tags: Array.from(tagIds),
           },
@@ -266,7 +269,7 @@ export async function POST(request: Request) {
           postId: createdPost.id,
           provider: payload.seoProvider,
           seoPayload: generated.meta.seo,
-          featuredImageUrl: featuredMedia.source_url,
+          featuredImageUrl: featuredMedia?.source_url,
           wpConfig,
         });
 
@@ -283,16 +286,18 @@ export async function POST(request: Request) {
           referenceId: source.link,
         });
 
-        await consumeTokens({
-          userId: user.id,
-          amount: TOKEN_COSTS.IMAGE_GENERATION,
-          reason: TokenReason.IMAGE_GENERATION,
-          action: "IMAGE_GENERATION",
-          description: `Generate news image "${generated.meta.title || source.title}"`,
-          requestId: `news:image:${itemRequestId}`,
-          referenceType: "news_image",
-          referenceId: String(createdPost.id),
-        });
+        if (!payload.skipImages) {
+          await consumeTokens({
+            userId: user.id,
+            amount: TOKEN_COSTS.IMAGE_GENERATION,
+            reason: TokenReason.IMAGE_GENERATION,
+            action: "IMAGE_GENERATION",
+            description: `Generate news image "${generated.meta.title || source.title}"`,
+            requestId: `news:image:${itemRequestId}`,
+            referenceType: "news_image",
+            referenceId: String(createdPost.id),
+          });
+        }
 
         const publishCharge = await consumeTokens({
           userId: user.id,
@@ -349,8 +354,8 @@ export async function POST(request: Request) {
       results,
       failures,
       tokenCharge: {
-        amountPerPost: TOKENS_PER_NEWS_POST,
-        total: TOKENS_PER_NEWS_POST * results.length,
+        amountPerPost: tokensPerPost,
+        total: tokensPerPost * results.length,
         remaining: tokenBalance,
       },
     });

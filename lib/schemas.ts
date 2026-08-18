@@ -12,6 +12,12 @@ const optionalUrlSchema = z.preprocess(
   z.string().trim().url().optional(),
 );
 
+const optionalStringSchema = z.preprocess(
+  emptyToUndefined,
+  z.string().trim().optional(),
+);
+
+export const aiProviderSchema = z.enum(["openai", "ollama"]);
 export const seoProviderSchema = z.enum(["AIOSEO", "Yoast", "None"]);
 export const publishStatusSchema = z.enum(["draft", "publish", "future"]);
 
@@ -45,6 +51,8 @@ export const generateArticleRequestSchema = z.object({
   tone: z.string().trim().min(1, "Tone is required."),
   wordCount: z.coerce.number().int().min(300).max(5000),
   links: z.array(hyperlinkSchema).max(50),
+  provider: aiProviderSchema.default("openai"),
+  model: optionalStringSchema,
 });
 
 export const socialMetaSchema = z.object({
@@ -76,11 +84,6 @@ export const generateImageRequestSchema = z.object({
   title: z.string().trim().min(3),
   brief: z.string().trim().min(10),
 });
-
-const optionalStringSchema = z.preprocess(
-  emptyToUndefined,
-  z.string().trim().optional(),
-);
 
 const optionalIdSchema = z.preprocess(
   emptyToUndefined,
@@ -174,6 +177,7 @@ export const googleDocImportRequestSchema = z
     selectedTagNames: tagsSchema,
     newTagNames: tagsSchema,
     seoProvider: seoProviderSchema.default("None"),
+    skipImages: z.coerce.boolean().default(false),
   })
   .superRefine((value, context) => {
     if (value.status === "future" && !value.scheduledAt) {
@@ -255,6 +259,9 @@ export const newsAutoPublishRequestSchema = z
     newTagNames: tagsSchema,
     inPostImageCount: z.coerce.number().int().min(0).max(10).default(0),
     seoProvider: seoProviderSchema.default("None"),
+    provider: aiProviderSchema.default("openai"),
+    model: optionalStringSchema,
+    skipImages: z.coerce.boolean().default(false),
   })
   .superRefine((value, context) => {
     if (value.status === "future" && !value.scheduledAt) {
@@ -309,3 +316,4 @@ export type NewsAutoPublishRequestPayload = z.infer<
   typeof newsAutoPublishRequestSchema
 >;
 export type SeoProviderInput = z.infer<typeof seoProviderSchema>;
+export type AiProviderInput = z.infer<typeof aiProviderSchema>;

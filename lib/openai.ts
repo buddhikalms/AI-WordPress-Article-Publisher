@@ -26,7 +26,7 @@ const getClient = () => {
   return openaiClient;
 };
 
-const slugify = (input: string) =>
+export const slugify = (input: string) =>
   input
     .toLowerCase()
     .trim()
@@ -34,7 +34,7 @@ const slugify = (input: string) =>
     .replace(/^-+|-+$/g, "")
     .slice(0, 80);
 
-const parseJsonFromModel = (content: string): unknown => {
+export const parseJsonFromModel = (content: string): unknown => {
   try {
     return JSON.parse(content);
   } catch {
@@ -107,7 +107,7 @@ const cleanSuggestedTags = (tags: string[]) =>
     10,
   );
 
-const hydrateGeneratedMeta = (
+export const hydrateGeneratedMeta = (
   meta: GenerateArticleResponsePayload["meta"],
   fallbackTitle: string,
   fallbackExcerpt: string,
@@ -181,7 +181,7 @@ export const generateArticleDraft = async (
 
   const client = getClient();
   const completion = await client.chat.completions.create({
-    model: defaultTextModel,
+    model: input.model?.trim() || defaultTextModel,
     temperature: 0.4,
     response_format: { type: "json_object" },
     messages: [
@@ -451,7 +451,7 @@ export const generateSeoPayloadForArticle = async (input: {
   };
 };
 
-const deriveFocusKeyword = (title: string) =>
+export const deriveFocusKeyword = (title: string) =>
   title
     .split(/\s+/)
     .map((item) => item.trim())
@@ -463,11 +463,13 @@ export const rewriteNewsAsOriginalArticle = async (input: {
   category: string;
   tone: string;
   wordCount: number;
+  provider?: "openai" | "ollama";
+  model?: string;
   article: NewsSourceArticle;
 }): Promise<GenerateArticleResponsePayload> => {
   const client = getClient();
   const completion = await client.chat.completions.create({
-    model: defaultTextModel,
+    model: input.model?.trim() || defaultTextModel,
     temperature: 0.45,
     response_format: { type: "json_object" },
     messages: [

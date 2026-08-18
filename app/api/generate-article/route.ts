@@ -6,7 +6,7 @@ import {
   enforceLinkPoliciesInHtml,
   validateRequiredLinks,
 } from "@/lib/link-validation";
-import { generateArticleDraft } from "@/lib/openai";
+import { generateArticleDraft } from "@/lib/ai";
 import { requireVerifiedUser } from "@/lib/auth-session";
 import { generateArticleRequestSchema } from "@/lib/schemas";
 import { consumeTokens, TOKEN_COSTS } from "@/lib/tokens";

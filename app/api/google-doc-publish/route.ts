@@ -230,6 +230,15 @@ const removeImageSourceFromHtml = (html: string, imageUrl?: string) => {
   return updated.replace(/<p\b[^>]*>\s*<\/p>/gi, "").trim();
 };
 
+const removeAllImages = (html: string) =>
+  html
+    .replace(/<figure\b[^>]*>[\s\S]*?<\/figure>/gi, (block) =>
+      /<img\b/i.test(block) ? "" : block,
+    )
+    .replace(/<img\b[^>]*>/gi, "")
+    .replace(/<p\b[^>]*>\s*<\/p>/gi, "")
+    .trim();
+
 const hasPublishablePostContent = (html: string) => {
   if (stripHtml(html).length >= 80) {
     return true;
@@ -293,9 +302,11 @@ export async function POST(request: Request) {
       tagIds.add(tag.id);
     }
 
-    const docImages: typeof draft.images = draft.images.length > 0
-      ? draft.images
-      : draft.imageUrls.map((url) => ({ url, altText: "", title: "", caption: "" }));
+    const docImages: typeof draft.images = payload.skipImages
+      ? []
+      : draft.images.length > 0
+        ? draft.images
+        : draft.imageUrls.map((url) => ({ url, altText: "", title: "", caption: "" }));
     const uploadedDocImages: Array<{
       originalUrl: string;
       id: number;
@@ -378,18 +389,20 @@ export async function POST(request: Request) {
         }
       : null;
 
-    const htmlForPublish = removeImageSourceFromHtml(
-      removeSkippedImageSources(
-        openLinksInNewTabs(
-          replaceImageSources(
-            draft.html,
-            imageSourceReplacements,
+    const htmlForPublish = payload.skipImages
+      ? removeAllImages(openLinksInNewTabs(draft.html))
+      : removeImageSourceFromHtml(
+          removeSkippedImageSources(
+            openLinksInNewTabs(
+              replaceImageSources(
+                draft.html,
+                imageSourceReplacements,
+              ),
+            ),
+            skippedImageSources,
           ),
-        ),
-        skippedImageSources,
-      ),
-      featuredMedia?.source_url,
-    );
+          featuredMedia?.source_url,
+        );
     if (!hasPublishablePostContent(htmlForPublish)) {
       throw new HttpError(
         400,

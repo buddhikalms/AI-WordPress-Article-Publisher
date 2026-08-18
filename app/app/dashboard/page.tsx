@@ -21,6 +21,7 @@ import type {
 } from "@/lib/types";
 
 type ToastState = { type: "success" | "error" | "info"; message: string };
+type AiProvider = "openai" | "ollama";
 type PublishMode = "draft" | "publish" | "future";
 type WorkspaceMode = "manual" | "google-doc" | "news";
 type CategoryOption = { id: number; name: string; slug: string; count?: number };
@@ -242,6 +243,11 @@ export default function DashboardPage() {
   const [wordCount, setWordCount] = useState(1200);
   const [links, setLinks] = useState<HyperlinkInput[]>([initialLink]);
   const [inPostImageCount, setInPostImageCount] = useState(0);
+  const [aiProvider, setAiProvider] = useState<AiProvider>("openai");
+  const [aiModel, setAiModel] = useState("");
+  const [skipManualImages, setSkipManualImages] = useState(false);
+  const [newsSkipImages, setNewsSkipImages] = useState(false);
+  const [googleDocSkipImages, setGoogleDocSkipImages] = useState(false);
   const [generatedHtml, setGeneratedHtml] = useState("");
   const [excerpt, setExcerpt] = useState("");
   const [suggestedTags, setSuggestedTags] = useState<string[]>([]);
@@ -486,6 +492,8 @@ export default function DashboardPage() {
           tone,
           wordCount: Number(wordCount),
           links: normalizeLinks(links),
+          provider: aiProvider,
+          model: aiModel.trim() || undefined,
         }),
       });
       if (!response.ok) throw new Error(await getApiError(response));
@@ -579,9 +587,9 @@ export default function DashboardPage() {
             status: publishMode,
             scheduledAt:
               publishMode === "future" ? toIsoFromLocalDateTime(scheduledAtLocal) : undefined,
-            featuredImageBase64: generatedImage?.imageBase64,
-            featuredImageMime: generatedImage?.mimeType,
-            inPostImageCount,
+            featuredImageBase64: skipManualImages ? undefined : generatedImage?.imageBase64,
+            featuredImageMime: skipManualImages ? undefined : generatedImage?.mimeType,
+            inPostImageCount: skipManualImages ? 0 : inPostImageCount,
             selectedCategoryIds: site.id === selectedSiteId ? selectedCategoryIds : [],
             selectedCategoryNames,
             newCategoryName: newCategoryName.trim(),
@@ -675,6 +683,7 @@ export default function DashboardPage() {
             selectedTagNames,
             newTagNames,
             seoProvider,
+            skipImages: googleDocSkipImages,
           }),
         });
         if (!response.ok) {
@@ -756,6 +765,9 @@ export default function DashboardPage() {
           newTagNames,
           inPostImageCount,
           seoProvider,
+          provider: aiProvider,
+          model: aiModel.trim() || undefined,
+          skipImages: newsSkipImages,
         }),
       });
       if (!response.ok) throw new Error(await getApiError(response));
@@ -1136,6 +1148,17 @@ export default function DashboardPage() {
                     <input type="number" className="input" min={300} max={5000} value={wordCount} onChange={(event) => setWordCount(Math.max(300, Math.min(5000, Number(event.target.value) || 1200)))} />
                   </div>
                   <div>
+                    <label className="label">AI engine</label>
+                    <select className="select" value={aiProvider} onChange={(event) => setAiProvider(event.target.value as AiProvider)}>
+                      <option value="openai">OpenAI</option>
+                      <option value="ollama">Ollama (self-hosted)</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="label">Model {aiProvider === "ollama" ? "(Ollama)" : "(OpenAI)"}</label>
+                    <input className="input" value={aiModel} onChange={(event) => setAiModel(event.target.value)} placeholder={aiProvider === "ollama" ? "e.g. llama3.1 (defaults to OLLAMA_TEXT_MODEL)" : "e.g. gpt-4.1-mini (optional override)"} />
+                  </div>
+                  <div>
                     <label className="label">Publish mode</label>
                     <select className="select" value={publishMode} onChange={(event) => setPublishMode(event.target.value as PublishMode)}>
                       <option value="draft">Draft</option>
@@ -1149,17 +1172,23 @@ export default function DashboardPage() {
                   </div>
                   <div>
                     <label className="label">In-post images</label>
-                    <input type="number" className="input" min={0} max={10} value={inPostImageCount} onChange={(event) => setInPostImageCount(Math.max(0, Math.min(10, Number(event.target.value) || 0)))} />
+                    <input type="number" className="input" min={0} max={10} value={inPostImageCount} onChange={(event) => setInPostImageCount(Math.max(0, Math.min(10, Number(event.target.value) || 0)))} disabled={skipManualImages} />
                   </div>
                   <div>
                     <label className="label">Canonical URL</label>
                     <input className="input" value={seoPayload.canonicalUrl || ""} onChange={(event) => setSeoPayload((current) => ({ ...current, canonicalUrl: event.target.value }))} placeholder="Optional canonical URL" />
                   </div>
+                  <div className="flex items-end">
+                    <label className="flex items-center gap-2 text-sm text-slate-700">
+                      <input type="checkbox" checked={skipManualImages} onChange={(event) => setSkipManualImages(event.target.checked)} />
+                      Skip images (add manually later)
+                    </label>
+                  </div>
                 </div>
 
                 <div className="mt-4 flex flex-wrap gap-2">
                   <button type="button" className="button-primary" onClick={handleGenerateDraft} disabled={isBusy}>{isGeneratingDraft ? "Generating..." : "Generate draft"}</button>
-                  <button type="button" className="button-muted" onClick={handleGenerateImage} disabled={isBusy}>{isGeneratingImage ? "Generating..." : "Generate image"}</button>
+                  <button type="button" className="button-muted" onClick={handleGenerateImage} disabled={isBusy || skipManualImages}>{isGeneratingImage ? "Generating..." : "Generate image"}</button>
                   <button type="button" className="button-secondary" onClick={handlePublishPost} disabled={isBusy || selectedSites.length === 0}>{isPublishing ? `Publishing to ${selectedSites.length} site(s)...` : `Publish to ${selectedSites.length || 0} site(s)`}</button>
                 </div>
 
@@ -1207,6 +1236,12 @@ export default function DashboardPage() {
                 <div>
                   <label className="label">Schedule date / time</label>
                   <input type="datetime-local" className="input" value={googleDocScheduledAtLocal} onChange={(event) => setGoogleDocScheduledAtLocal(event.target.value)} disabled={googleDocPublishMode !== "future"} />
+                </div>
+                <div className="flex items-end">
+                  <label className="flex items-center gap-2 text-sm text-slate-700">
+                    <input type="checkbox" checked={googleDocSkipImages} onChange={(event) => setGoogleDocSkipImages(event.target.checked)} />
+                    Skip images (add manually later)
+                  </label>
                 </div>
               </div>
 
@@ -1260,6 +1295,27 @@ export default function DashboardPage() {
                 <div>
                   <label className="label">Schedule date / time</label>
                   <input type="datetime-local" className="input" value={newsScheduledAtLocal} onChange={(event) => setNewsScheduledAtLocal(event.target.value)} disabled={newsPublishMode !== "future"} />
+                </div>
+                <div>
+                  <label className="label">AI engine</label>
+                  <select className="select" value={aiProvider} onChange={(event) => setAiProvider(event.target.value as AiProvider)}>
+                    <option value="openai">OpenAI</option>
+                    <option value="ollama">Ollama (self-hosted)</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="label">Model {aiProvider === "ollama" ? "(Ollama)" : "(OpenAI)"}</label>
+                  <input className="input" value={aiModel} onChange={(event) => setAiModel(event.target.value)} placeholder={aiProvider === "ollama" ? "e.g. llama3.1 (defaults to OLLAMA_TEXT_MODEL)" : "e.g. gpt-4.1-mini (optional override)"} />
+                </div>
+                <div>
+                  <label className="label">In-post images</label>
+                  <input type="number" className="input" min={0} max={10} value={inPostImageCount} onChange={(event) => setInPostImageCount(Math.max(0, Math.min(10, Number(event.target.value) || 0)))} disabled={newsSkipImages} />
+                </div>
+                <div className="flex items-end">
+                  <label className="flex items-center gap-2 text-sm text-slate-700">
+                    <input type="checkbox" checked={newsSkipImages} onChange={(event) => setNewsSkipImages(event.target.checked)} />
+                    Skip images (add manually later)
+                  </label>
                 </div>
               </div>
 
