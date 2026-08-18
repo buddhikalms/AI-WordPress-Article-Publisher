@@ -8,6 +8,7 @@
     "start": "next start",
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
+    "db:deploy": "prisma migrate deploy",
     "prisma:seed": "node prisma/seed.js",
     "test": "vitest run",
     "postinstall": "prisma generate"

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
+import { getErrorMessage } from "@/lib/errors";
 import { isAllowedRedirectUri } from "@/lib/mcp/oauth-clients";
 import { generateClientId } from "@/lib/mcp/tokens";
 
@@ -19,7 +20,10 @@ const registerRequestSchema = z.object({
 });
 
 const oauthError = (status: number, error: string, description: string) =>
-  NextResponse.json({ error, error_description: description }, { status });
+  NextResponse.json(
+    { error, error_description: description },
+    { status, headers: { "Cache-Control": "no-store", Pragma: "no-cache" } },
+  );
 
 export async function POST(request: Request) {
   let json: unknown;
@@ -81,14 +85,29 @@ export async function POST(request: Request) {
     );
   }
 
-  const clientId = generateClientId();
-  const client = await prisma.mcpOAuthClient.create({
-    data: {
-      clientId,
-      clientName: payload.client_name?.trim() || "MCP Client",
-      redirectUris: payload.redirect_uris,
-    },
-  });
+  let client: { clientId: string; clientName: string; createdAt: Date };
+  try {
+    const clientId = generateClientId();
+    client = await prisma.mcpOAuthClient.create({
+      data: {
+        clientId,
+        clientName: payload.client_name?.trim() || "MCP Client",
+        redirectUris: payload.redirect_uris,
+      },
+      select: {
+        clientId: true,
+        clientName: true,
+        createdAt: true,
+      },
+    });
+  } catch (error) {
+    console.error("MCP dynamic client registration failed", error);
+    return oauthError(
+      503,
+      "temporarily_unavailable",
+      `Dynamic client registration storage is unavailable. Run Prisma migrations and verify DATABASE_URL. ${getErrorMessage(error)}`,
+    );
+  }
 
   return NextResponse.json(
     {
@@ -100,6 +119,6 @@ export async function POST(request: Request) {
       token_endpoint_auth_method: "none",
       client_id_issued_at: Math.floor(client.createdAt.getTime() / 1000),
     },
-    { status: 201 },
+    { status: 201, headers: { "Cache-Control": "no-store", Pragma: "no-cache" } },
   );
 }

@@ -64,6 +64,29 @@ In ChatGPT's connector/MCP settings, add a custom connector pointing at
 `.well-known` metadata above, register itself, and walk the user through the
 sign-in + consent screen described above the first time they use it.
 
+For production, `APP_URL`, `NEXTAUTH_URL`, and `NEXT_PUBLIC_APP_URL` should all
+use the public HTTPS origin ChatGPT can reach, for example
+`https://example.com`. After pulling changes on the server, run:
+
+```bash
+npm install
+npm run db:deploy
+npm run build
+```
+
+If ChatGPT shows `Dynamic client registration failed`, first verify the
+registration endpoint directly:
+
+```bash
+curl -i https://example.com/api/oauth/register \
+  -H "Content-Type: application/json" \
+  -d '{"redirect_uris":["https://chatgpt.com/oauth/callback"],"client_name":"ChatGPT","token_endpoint_auth_method":"none"}'
+```
+
+A successful response is `201` with a `client_id`. A `503` response means the
+app could not write to the MCP OAuth client table; run `npm run db:deploy` and
+check that `DATABASE_URL` points at the production database.
+
 ### Local development
 
 Point the connector at `http://localhost:3000/api/mcp` while running `npm run dev`.
