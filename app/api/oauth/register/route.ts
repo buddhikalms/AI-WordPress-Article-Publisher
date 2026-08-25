@@ -8,7 +8,7 @@ import { generateClientId } from "@/lib/mcp/tokens";
 export const runtime = "nodejs";
 
 // RFC 7591 Dynamic Client Registration. This server only issues public
-// clients (PKCE-only, no client secret) — every authorization request must
+// clients (PKCE-only, no client secret); every authorization request must
 // carry an S256 code_challenge, so there is no secret to leak or rotate.
 const registerRequestSchema = z.object({
   redirect_uris: z.array(z.string()).min(1),
@@ -18,6 +18,9 @@ const registerRequestSchema = z.object({
   response_types: z.array(z.string()).optional(),
   scope: z.string().optional(),
 });
+
+const toRedirectUrisInput = (redirectUris: string[]) =>
+  redirectUris as unknown as string;
 
 const oauthError = (status: number, error: string, description: string) =>
   NextResponse.json(
@@ -92,7 +95,7 @@ export async function POST(request: Request) {
       data: {
         clientId,
         clientName: payload.client_name?.trim() || "MCP Client",
-        redirectUris: payload.redirect_uris,
+        redirectUris: toRedirectUrisInput(payload.redirect_uris),
       },
       select: {
         clientId: true,
