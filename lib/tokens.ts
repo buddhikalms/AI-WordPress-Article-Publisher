@@ -3,6 +3,9 @@ import { TokenReason, UsageAction } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { HttpError } from "@/lib/errors";
 
+const toGenerationUsageMetadataInput = (metadata: Prisma.InputJsonValue | undefined) =>
+  metadata as unknown as string | undefined;
+
 export const TOKEN_COSTS: Record<UsageAction, number> = {
   ARTICLE_GENERATION: 5,
   IMAGE_GENERATION: 2,
@@ -136,7 +139,7 @@ export const consumeTokens = async (params: {
         action: params.action,
         tokensSpent: params.amount,
         requestId: params.requestId,
-        metadata: params.metadata,
+        metadata: toGenerationUsageMetadataInput(params.metadata),
       },
     });
 

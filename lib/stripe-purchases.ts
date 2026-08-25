@@ -2,6 +2,9 @@ import type Stripe from "stripe";
 import { TokenReason } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 
+const toPackagePurchaseMetadataInput = (metadata: Record<string, unknown>) =>
+  metadata as unknown as string;
+
 const toPaymentIntentId = (value: string | Stripe.PaymentIntent | null) => {
   if (!value) {
     return null;
@@ -71,10 +74,10 @@ export const markPackagePurchaseAsPaid = async (session: Stripe.Checkout.Session
       data: {
         status: "PAID",
         stripePaymentIntentId: toPaymentIntentId(session.payment_intent),
-        metadata: {
+        metadata: toPackagePurchaseMetadataInput({
           ...(typeof purchase.metadata === "object" && purchase.metadata ? purchase.metadata : {}),
           paymentStatus: session.payment_status,
-        },
+        }),
       },
     });
 

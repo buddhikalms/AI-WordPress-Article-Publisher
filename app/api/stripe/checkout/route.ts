@@ -7,6 +7,9 @@ import { getStripeClient } from "@/lib/stripe";
 
 export const runtime = "nodejs";
 
+const toPackagePurchaseMetadataInput = (metadata: { checkoutUrl: string | null }) =>
+  metadata as unknown as string;
+
 export async function POST(request: Request) {
   try {
     const user = await requireVerifiedUser(request);
@@ -81,9 +84,9 @@ export async function POST(request: Request) {
         amountCents: selectedPackage.priceCents,
         currency: selectedPackage.currency,
         stripeCheckoutSessionId: session.id,
-        metadata: {
+        metadata: toPackagePurchaseMetadataInput({
           checkoutUrl: session.url,
-        },
+        }),
       },
     });
 
