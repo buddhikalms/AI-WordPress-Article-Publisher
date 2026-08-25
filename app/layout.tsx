@@ -13,6 +13,11 @@ export default function RootLayout({
 }: Readonly<{ children: React.ReactNode }>) {
   return (
     <html lang="en" suppressHydrationWarning>
+      {process.env.NODE_ENV === "development" ? (
+        <head>
+          <link rel="stylesheet" href="/_next/static/css/app/layout.css" />
+        </head>
+      ) : null}
       <body>
         <script
           dangerouslySetInnerHTML={{
