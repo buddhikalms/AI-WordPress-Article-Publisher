@@ -1,9 +1,10 @@
-﻿import * as geminiProvider from "@/lib/gemini";
+import * as geminiProvider from "@/lib/gemini";
 import * as ollamaProvider from "@/lib/ollama";
 import * as openaiProvider from "@/lib/openai";
 import type {
   EditArticleRequest,
   GenerateArticleRequest,
+  GenerateImageRequest,
   GenerateArticleResponsePayload,
 } from "@/lib/schemas";
 import type { NewsSourceArticle } from "@/lib/newsdata";
@@ -40,3 +41,26 @@ export const rewriteNewsAsOriginalArticle = (input: {
     : input.provider === "ollama"
     ? ollamaProvider.rewriteNewsAsOriginalArticle(input)
     : openaiProvider.rewriteNewsAsOriginalArticle(input);
+
+export const generateFeaturedImage = (
+  input: GenerateImageRequest & {
+    provider?: "openai" | "gemini" | "ollama";
+    model?: string;
+    apiKey?: string;
+  },
+) =>
+  input.provider === "openai"
+    ? openaiProvider.generateFeaturedImage(input)
+    : geminiProvider.generateFeaturedImage(input);
+
+export const generateInlineArticleImages = (input: {
+  title: string;
+  brief: string;
+  count: number;
+  provider?: "openai" | "gemini" | "ollama";
+  model?: string;
+  apiKey?: string;
+}) =>
+  input.provider === "openai"
+    ? openaiProvider.generateInlineArticleImages(input)
+    : geminiProvider.generateInlineArticleImages(input);

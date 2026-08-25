@@ -174,6 +174,9 @@ const getMediaUploadWarning = (label: string, error: unknown) => {
   if (error instanceof WpApiError && (error.status === 401 || error.status === 403)) {
     return `${label} was skipped because WordPress refused media uploads for the selected site user. The article was still published without that image.`;
   }
+  if (error instanceof WpApiError) {
+    return `${label} was skipped because WordPress media upload failed: ${error.message} The article was still published without that image.`;
+  }
 
   throw error;
 };

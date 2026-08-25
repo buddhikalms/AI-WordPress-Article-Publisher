@@ -1,12 +1,12 @@
-import { z } from "zod";
+﻿import { z } from "zod";
 import { TokenReason } from "@prisma/client";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { HttpError } from "@/lib/errors";
 import { prisma } from "@/lib/prisma";
 import { runTool } from "@/lib/mcp/tool-context";
 import { fetchNewsByCategory } from "@/lib/newsdata";
-import { rewriteNewsAsOriginalArticle } from "@/lib/ai";
-import { generateFeaturedImage } from "@/lib/openai";
+import { generateFeaturedImage, rewriteNewsAsOriginalArticle } from "@/lib/ai";
+import { resolveAiProviderCredential } from "@/lib/ai-credentials";
 import { runNewsAutopilot } from "@/lib/services/news-autopilot";
 import { consumeTokens, TOKEN_COSTS } from "@/lib/tokens";
 import {
@@ -89,12 +89,19 @@ export const registerNewsTools = (server: McpServer) => {
             throw new HttpError(402, "Insufficient tokens. Please buy a package.");
           }
 
+          const credential = await resolveAiProviderCredential({
+            userId: ctx.userId,
+            provider: input.provider || "gemini",
+            requestedModel: input.model,
+          });
+
           const generated = await rewriteNewsAsOriginalArticle({
             category: input.category,
             tone: input.tone,
             wordCount: input.word_count,
-            provider: input.provider,
-            model: input.model,
+            provider: input.provider || "gemini",
+            model: credential.model || input.model,
+            apiKey: credential.apiKey,
             article: {
               title: input.source_title,
               description: input.source_description || "",
@@ -124,6 +131,9 @@ export const registerNewsTools = (server: McpServer) => {
             featuredImage = await generateFeaturedImage({
               title: generated.meta.title || input.source_title,
               brief: generated.meta.excerpt || input.source_description || input.source_title,
+              provider: input.provider || "gemini",
+              model: input.provider === "openai" ? credential.model || input.model : undefined,
+              apiKey: credential.apiKey,
             });
             const imageCharge = await consumeTokens({
               userId: ctx.userId,
@@ -203,7 +213,7 @@ export const registerNewsTools = (server: McpServer) => {
             newTagNames: [],
             inPostImageCount: input.in_post_image_count,
             seoProvider: input.seo_provider,
-            provider: input.provider,
+            provider: input.provider || "gemini",
             model: input.model,
             skipImages: !input.generate_featured_image,
           });

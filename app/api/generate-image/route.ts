@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 import { TokenReason } from "@prisma/client";
 import { HttpError, toErrorResponse } from "@/lib/errors";
-import { generateFeaturedImage } from "@/lib/openai";
+import { generateFeaturedImage } from "@/lib/ai";
+import { resolveAiProviderCredential } from "@/lib/ai-credentials";
 import { requireVerifiedUser } from "@/lib/auth-session";
 import { generateImageRequestSchema } from "@/lib/schemas";
 import { consumeTokens, TOKEN_COSTS } from "@/lib/tokens";
@@ -26,7 +27,18 @@ export async function POST(request: Request) {
       );
     }
 
-    const image = await generateFeaturedImage(validation.data);
+    const credential = await resolveAiProviderCredential({
+      userId: user.id,
+      provider: validation.data.provider,
+      requestedModel: validation.data.provider === "openai" ? validation.data.model : undefined,
+    });
+    const image = await generateFeaturedImage({
+      ...validation.data,
+      model: validation.data.provider === "openai"
+        ? credential.model || validation.data.model
+        : undefined,
+      apiKey: credential.apiKey,
+    });
     const requestId =
       request.headers.get("x-request-id") || crypto.randomUUID();
 

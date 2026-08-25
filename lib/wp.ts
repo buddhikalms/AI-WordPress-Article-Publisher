@@ -187,25 +187,45 @@ const buildAuthHeader = (config?: WpConfig) => {
   return `Basic ${token}`;
 };
 
+const parseJsonFromNoisyWpBody = (bodyText: string) => {
+  try {
+    return JSON.parse(bodyText) as unknown;
+  } catch {
+    const objectStart = bodyText.indexOf("{");
+    const arrayStart = bodyText.indexOf("[");
+    const starts = [objectStart, arrayStart].filter((index) => index >= 0);
+    const start = starts.length > 0 ? Math.min(...starts) : -1;
+    const objectEnd = bodyText.lastIndexOf("}");
+    const arrayEnd = bodyText.lastIndexOf("]");
+    const end = Math.max(objectEnd, arrayEnd);
+
+    if (start >= 0 && end > start) {
+      try {
+        return JSON.parse(bodyText.slice(start, end + 1)) as unknown;
+      } catch {
+        return bodyText;
+      }
+    }
+
+    return bodyText;
+  }
+};
+
 const parseWpResponseBody = async (response: Response) => {
   const bodyText = await response.text();
   if (!bodyText) {
     return null;
   }
-  try {
-    return JSON.parse(bodyText) as unknown;
-  } catch {
-    return bodyText;
-  }
+  return parseJsonFromNoisyWpBody(bodyText);
 };
 
 const isHtmlResponse = (response: Response, parsedBody: unknown) => {
+  if (typeof parsedBody !== "string") {
+    return false;
+  }
   const contentType = response.headers.get("content-type")?.toLowerCase() || "";
   if (contentType.includes("text/html")) {
     return true;
-  }
-  if (typeof parsedBody !== "string") {
-    return false;
   }
   const sample = parsedBody.trimStart().slice(0, 80).toLowerCase();
   return sample.startsWith("<!doctype html") || sample.startsWith("<html") || sample.includes("<head");
@@ -263,6 +283,21 @@ const getWpErrorMessage = (status: number, path: string, details?: unknown) => {
     : `WordPress request failed (${status}) for ${path}.`;
 };
 
+const getWpRequestTimeoutMs = () => {
+  const configured = Number(process.env.WORDPRESS_REQUEST_TIMEOUT_MS);
+  if (Number.isFinite(configured) && configured >= 5_000) {
+    return configured;
+  }
+  return 30_000;
+};
+
+const getFetchErrorMessage = (error: unknown) => {
+  if (error instanceof Error) {
+    return error.message || error.name;
+  }
+  return "Unknown network error.";
+};
+
 const wpRequest = async <T>(
   path: string,
   init: RequestInit = {},
@@ -288,9 +323,34 @@ const wpRequest = async <T>(
   };
 
   const tryRequest = async (url: string) => {
-    const response = await fetch(url, requestInit);
-    const parsedBody = await parseWpResponseBody(response);
-    return { response, parsedBody };
+    const timeoutMs = getWpRequestTimeoutMs();
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
+
+    try {
+      const response = await fetch(url, {
+        ...requestInit,
+        signal: controller.signal,
+      });
+      const parsedBody = await parseWpResponseBody(response);
+      return { response, parsedBody };
+    } catch (error) {
+      if (error instanceof Error && error.name === "AbortError") {
+        throw new WpApiError(
+          504,
+          `WordPress request timed out after ${Math.round(timeoutMs / 1000)} seconds for ${path}.`,
+          { path, url, timeoutMs },
+        );
+      }
+
+      throw new WpApiError(
+        502,
+        `Could not reach WordPress for ${path}: ${getFetchErrorMessage(error)}`,
+        { path, url },
+      );
+    } finally {
+      clearTimeout(timeout);
+    }
   };
 
   const primaryUrl = buildWpUrl(path, config);

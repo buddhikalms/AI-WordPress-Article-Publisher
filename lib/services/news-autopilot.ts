@@ -1,7 +1,6 @@
 import { TokenReason } from "@prisma/client";
 import { HttpError } from "@/lib/errors";
-import { generateFeaturedImage, generateInlineArticleImages } from "@/lib/openai";
-import { rewriteNewsAsOriginalArticle } from "@/lib/ai";
+import { generateFeaturedImage, generateInlineArticleImages, rewriteNewsAsOriginalArticle } from "@/lib/ai";
 import { resolveAiProviderCredential } from "@/lib/ai-credentials";
 import { getUserWordPressConfig } from "@/lib/user-wordpress";
 import { fetchNewsByCategory } from "@/lib/newsdata";
@@ -160,7 +159,7 @@ export const runNewsAutopilot = async (params: {
     try {
       const credential = await resolveAiProviderCredential({
         userId: params.userId,
-        provider: payload.provider || "openai",
+        provider: payload.provider || "gemini",
         requestedModel: payload.model,
       });
       const generated = await rewriteNewsAsOriginalArticle({
@@ -179,10 +178,20 @@ export const runNewsAutopilot = async (params: {
       }
 
       let featuredMedia: Awaited<ReturnType<typeof uploadFeaturedMedia>> | null = null;
+      const imageCredential = !payload.skipImages
+        ? await resolveAiProviderCredential({
+            userId: params.userId,
+            provider: payload.provider || "gemini",
+            requestedModel: payload.provider === "openai" ? payload.model : undefined,
+          })
+        : null;
       if (!payload.skipImages) {
         const generatedImage = await generateFeaturedImage({
           title: generated.meta.title || source.title,
           brief: generated.meta.excerpt || source.description || source.title,
+          provider: payload.provider || "gemini",
+          model: payload.provider === "openai" ? imageCredential?.model || payload.model : undefined,
+          apiKey: imageCredential?.apiKey,
         });
 
         featuredMedia = await uploadFeaturedMedia(
@@ -209,6 +218,9 @@ export const runNewsAutopilot = async (params: {
           title: generated.meta.title || source.title,
           brief: generated.meta.excerpt || source.description || source.title,
           count: payload.inPostImageCount,
+          provider: payload.provider || "gemini",
+          model: payload.provider === "openai" ? imageCredential?.model || payload.model : undefined,
+          apiKey: imageCredential?.apiKey,
         });
 
         for (

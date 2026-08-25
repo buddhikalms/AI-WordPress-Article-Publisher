@@ -64,7 +64,7 @@ export const generateArticleRequestSchema = z.object({
   tone: z.string().trim().min(1, "Tone is required."),
   wordCount: z.coerce.number().int().min(300).max(5000),
   links: z.array(hyperlinkSchema).max(50),
-  provider: aiProviderSchema.default("openai"),
+  provider: aiProviderSchema.default("gemini"),
   model: optionalStringSchema,
 });
 
@@ -102,6 +102,8 @@ export const generatedArticleResponseSchema = z.object({
 export const generateImageRequestSchema = z.object({
   title: z.string().trim().min(3),
   brief: z.string().trim().min(10),
+  provider: aiProviderSchema.default("gemini"),
+  model: optionalStringSchema,
 });
 
 const optionalIdSchema = z.preprocess(
@@ -280,7 +282,7 @@ export const newsAutoPublishRequestSchema = z
     newTagNames: tagsSchema,
     inPostImageCount: z.coerce.number().int().min(0).max(10).default(0),
     seoProvider: seoProviderSchema.default("None"),
-    provider: aiProviderSchema.default("openai"),
+    provider: aiProviderSchema.default("gemini"),
     model: optionalStringSchema,
     skipImages: z.coerce.boolean().default(false),
   })

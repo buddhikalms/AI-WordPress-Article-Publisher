@@ -1,4 +1,4 @@
-﻿import { decryptSecret, encryptSecret } from "@/lib/crypto";
+import { decryptSecret, encryptSecret } from "@/lib/crypto";
 import { HttpError } from "@/lib/errors";
 import { prisma } from "@/lib/prisma";
 

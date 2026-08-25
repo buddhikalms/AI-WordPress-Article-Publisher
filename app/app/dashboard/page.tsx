@@ -105,8 +105,8 @@ const newsCategoryOptions = [
 ] as const;
 
 const aiProviderOptions: { value: AiProvider; label: string }[] = [
-  { value: "openai", label: "OpenAI" },
   { value: "gemini", label: "Gemini" },
+  { value: "openai", label: "OpenAI" },
   { value: "ollama", label: "Ollama (self-hosted)" },
 ];
 
@@ -122,9 +122,7 @@ const aiModelOptions: Record<AiProvider, AiModelOption[]> = {
     { value: "gemini-3.6-flash", label: "Gemini 3.6 Flash" },
     { value: "gemini-3.5-flash-lite", label: "Gemini 3.5 Flash-Lite" },
     { value: "gemini-3.1-flash-lite", label: "Gemini 3.1 Flash-Lite" },
-    { value: "gemini-2.5-pro", label: "Gemini 2.5 Pro" },
-    { value: "gemini-2.5-flash", label: "Gemini 2.5 Flash" },
-    { value: "gemini-1.5-flash", label: "Gemini 1.5 Flash" },
+    { value: "gemini-flash-latest", label: "Gemini Flash Latest" },
   ],
   ollama: [
     { value: "llama3.1", label: "Llama 3.1" },
@@ -305,8 +303,8 @@ export default function DashboardPage() {
   const [wordCount, setWordCount] = useState(1200);
   const [links, setLinks] = useState<HyperlinkInput[]>([initialLink]);
   const [inPostImageCount, setInPostImageCount] = useState(0);
-  const [aiProvider, setAiProvider] = useState<AiProvider>("openai");
-  const [aiModel, setAiModel] = useState(getDefaultAiModel("openai"));
+  const [aiProvider, setAiProvider] = useState<AiProvider>("gemini");
+  const [aiModel, setAiModel] = useState(getDefaultAiModel("gemini"));
   const [skipManualImages, setSkipManualImages] = useState(false);
   const [newsSkipImages, setNewsSkipImages] = useState(false);
   const [googleDocSkipImages, setGoogleDocSkipImages] = useState(false);
@@ -845,7 +843,12 @@ export default function DashboardPage() {
       const response = await fetch("/api/generate-image", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ title: title.trim(), brief: brief.trim() }),
+        body: JSON.stringify({
+          title: title.trim(),
+          brief: brief.trim(),
+          provider: aiProvider,
+          model: aiModel.trim() || undefined,
+        }),
       });
       if (!response.ok) throw new Error(await getApiError(response));
       const data = (await response.json()) as GeneratedImageState;
@@ -897,7 +900,7 @@ export default function DashboardPage() {
               publishMode === "future" ? toIsoFromLocalDateTime(scheduledAtLocal) : undefined,
             featuredImageBase64: skipManualImages ? undefined : generatedImage?.imageBase64,
             featuredImageMime: skipManualImages ? undefined : generatedImage?.mimeType,
-            inPostImageCount: skipManualImages ? 0 : inPostImageCount,
+            inPostImageCount: 0,
             selectedCategoryIds: site.id === selectedSiteId ? selectedCategoryIds : [],
             selectedCategoryNames,
             newCategoryName: newCategoryName.trim(),

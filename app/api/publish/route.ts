@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { toErrorResponse } from "@/lib/errors";
+import { HttpError, getErrorMessage, toErrorResponse } from "@/lib/errors";
 import { publishRequestSchema } from "@/lib/schemas";
 import { requireVerifiedUser } from "@/lib/auth-session";
 import { publishArticleForUser } from "@/lib/services/publishing";
@@ -33,6 +33,11 @@ export async function POST(request: Request) {
 
     return NextResponse.json(result);
   } catch (error) {
+    console.error("Publish failed", {
+      message: getErrorMessage(error, "Failed to publish post to WordPress."),
+      status: error instanceof HttpError ? error.status : undefined,
+      details: error instanceof HttpError ? error.details : undefined,
+    });
     return toErrorResponse(error, "Failed to publish post to WordPress.");
   }
 }

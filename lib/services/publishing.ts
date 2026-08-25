@@ -1,6 +1,5 @@
 import { TokenReason } from "@prisma/client";
 import { HttpError } from "@/lib/errors";
-import { generateInlineArticleImages } from "@/lib/openai";
 import { getUserWordPressConfig } from "@/lib/user-wordpress";
 import { consumeTokens, TOKEN_COSTS } from "@/lib/tokens";
 import { applySeoUpdate } from "@/lib/wp-seo";
@@ -21,55 +20,6 @@ const escapeHtmlAttribute = (value: string) =>
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;");
 
-const buildInlineImageFigure = (image: {
-  sourceUrl: string;
-  altText?: string;
-}) => {
-  const altText = escapeHtmlAttribute(image.altText || "");
-  const src = escapeHtmlAttribute(image.sourceUrl);
-  return `<figure class="wp-block-image size-large"><img src="${src}" alt="${altText}" loading="lazy" decoding="async" /></figure>`;
-};
-
-const injectInlineImagesIntoHtml = (
-  html: string,
-  images: Array<{ sourceUrl: string; altText?: string }>,
-) => {
-  if (images.length === 0) {
-    return html;
-  }
-
-  const parts = html.split(/<\/p>/i);
-  if (parts.length <= 1) {
-    const appended = images.map(buildInlineImageFigure).join("");
-    return `${html}${appended}`;
-  }
-
-  const interval = Math.max(1, Math.floor(parts.length / (images.length + 1)));
-  let imageIndex = 0;
-  let output = "";
-
-  for (let index = 0; index < parts.length; index += 1) {
-    const part = parts[index];
-    if (part.length > 0) {
-      output += part;
-    }
-    if (index < parts.length - 1) {
-      output += "</p>";
-    }
-    if (imageIndex < images.length && (index + 1) % interval === 0) {
-      output += buildInlineImageFigure(images[imageIndex]);
-      imageIndex += 1;
-    }
-  }
-
-  while (imageIndex < images.length) {
-    output += buildInlineImageFigure(images[imageIndex]);
-    imageIndex += 1;
-  }
-
-  return output;
-};
-
 const getImgAltText = (imgTag: string) => {
   const altMatch = imgTag.match(/\balt\s*=\s*(["'])(.*?)\1/i);
   return altMatch?.[2] || "";
@@ -86,6 +36,9 @@ const replaceImgSrc = (imgTag: string, sourceUrl: string) => {
 const getMediaUploadWarning = (label: string, error: unknown) => {
   if (error instanceof WpApiError && (error.status === 401 || error.status === 403)) {
     return `${label} was skipped because WordPress refused media uploads for the selected site user. The article was still published without that image.`;
+  }
+  if (error instanceof WpApiError) {
+    return `${label} was skipped because WordPress media upload failed: ${error.message} The article was still published without that image.`;
   }
 
   throw error;
@@ -197,36 +150,9 @@ export const publishArticleForUser = async (params: {
     [];
 
   if (payload.inPostImageCount > 0) {
-    const generatedInlineImages = await generateInlineArticleImages({
-      title: payload.title,
-      brief: payload.brief || payload.excerpt || payload.title,
-      count: payload.inPostImageCount,
-    });
-
-    for (let index = 0; index < generatedInlineImages.length; index += 1) {
-      const generated = generatedInlineImages[index];
-      try {
-        const media = await uploadFeaturedMedia({
-          imageBase64: generated.imageBase64,
-          mimeType: generated.mimeType,
-          title: `${payload.title} inline image ${index + 1}`,
-          filenameSuggestion: generated.filenameSuggestion,
-          altText: generated.altTextSuggestion,
-        }, wpConfig);
-
-        inlineImages.push({
-          id: media.id,
-          sourceUrl: media.source_url,
-          altText: generated.altTextSuggestion,
-        });
-      } catch (error) {
-        warnings.push(
-          getMediaUploadWarning(`Inline image ${index + 1}`, error),
-        );
-      }
-    }
-
-    htmlForPublish = injectInlineImagesIntoHtml(htmlForPublish, inlineImages);
+    warnings.push(
+      "In-post AI image generation is skipped during WordPress publish. Generate and insert images before publishing, or use News Autopilot for AI image generation.",
+    );
   }
 
   htmlForPublish = await uploadEmbeddedDataImages(htmlForPublish, {
