@@ -1,8 +1,9 @@
-"use client";
+﻿"use client";
 
 import { FormEvent, useEffect, useState } from "react";
 import { signOut, useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
+import AiCredentialsPanel from "@/components/AiCredentialsPanel";
 import DashboardLoadError from "@/components/DashboardLoadError";
 import DashboardLoading from "@/components/DashboardLoading";
 import DashboardShell, { type DashboardNavItem } from "@/components/DashboardShell";
@@ -244,7 +245,8 @@ export default function AccountPage() {
         [
           { href: "/app/dashboard", label: "Workspace", hint: "Drafts, imports, and autopilot", group: "Workspace", icon: "workspace" },
           { href: "/billing", label: "Billing", hint: "Packages and purchases", group: "Revenue", icon: "billing" },
-          { href: "/account", label: "Account", hint: "Profile, password, and sites", group: "Settings", icon: "sites" },
+          { href: "/account", label: "Account", hint: "Profile, password, sites, and AI keys", group: "Settings", icon: "sites" },
+          { href: "/account#ai-keys", label: "AI Keys", hint: "OpenAI and Gemini credentials", group: "Settings", icon: "settings" },
           { href: "/admin", label: "Admin", hint: "Platform administration", visible: account.user.role === "ADMIN", group: "Operations", icon: "admin" },
         ] satisfies DashboardNavItem[]
       }
@@ -270,6 +272,14 @@ export default function AccountPage() {
               </div>
             </div>
           </section>
+          <AiCredentialsPanel
+            endpoint="/api/account/ai-credentials"
+            title="Your AI provider keys"
+            subtitle="Save personal OpenAI or Gemini keys for generation. Your key is encrypted and used before any platform fallback key."
+            scopeLabel="User"
+          />
+
+
 
           <section className="panel px-4 py-4 md:px-5">
             <div className="section-header">

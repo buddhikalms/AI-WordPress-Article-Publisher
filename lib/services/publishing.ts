@@ -4,6 +4,7 @@ import { generateInlineArticleImages } from "@/lib/openai";
 import { getUserWordPressConfig } from "@/lib/user-wordpress";
 import { consumeTokens, TOKEN_COSTS } from "@/lib/tokens";
 import { applySeoUpdate } from "@/lib/wp-seo";
+import { enforceLinkPoliciesInHtml } from "@/lib/link-validation";
 import {
   ensureCategory,
   ensureTag,
@@ -69,12 +70,70 @@ const injectInlineImagesIntoHtml = (
   return output;
 };
 
+const getImgAltText = (imgTag: string) => {
+  const altMatch = imgTag.match(/\balt\s*=\s*(["'])(.*?)\1/i);
+  return altMatch?.[2] || "";
+};
+
+const replaceImgSrc = (imgTag: string, sourceUrl: string) => {
+  const escapedSource = escapeHtmlAttribute(sourceUrl);
+  if (/\bsrc\s*=/i.test(imgTag)) {
+    return imgTag.replace(/\bsrc\s*=\s*(["'])(.*?)\1/i, `src="${escapedSource}"`);
+  }
+  return imgTag.replace(/>$/, ` src="${escapedSource}">`);
+};
+
 const getMediaUploadWarning = (label: string, error: unknown) => {
   if (error instanceof WpApiError && (error.status === 401 || error.status === 403)) {
     return `${label} was skipped because WordPress refused media uploads for the selected site user. The article was still published without that image.`;
   }
 
   throw error;
+};
+
+const uploadEmbeddedDataImages = async (
+  html: string,
+  params: {
+    title: string;
+    wpConfig: Awaited<ReturnType<typeof getUserWordPressConfig>>;
+    warnings: string[];
+  },
+) => {
+  const imageRegex =
+    /<img\b[^>]*\bsrc\s*=\s*(["'])(data:([^;]+);base64,.*?)\1[^>]*>/gis;
+  const matches = Array.from(html.matchAll(imageRegex));
+  if (matches.length === 0) {
+    return html;
+  }
+
+  let nextHtml = html;
+  for (let index = 0; index < matches.length; index += 1) {
+    const match = matches[index];
+    const imgTag = match[0];
+    const dataUrl = match[2];
+    const mimeType = match[3] || "image/png";
+    const altText = getImgAltText(imgTag);
+
+    try {
+      const media = await uploadFeaturedMedia(
+        {
+          imageBase64: dataUrl,
+          mimeType,
+          title: `${params.title} editor image ${index + 1}`,
+          filenameSuggestion: `${params.title}-editor-${index + 1}`,
+          altText,
+        },
+        params.wpConfig,
+      );
+      nextHtml = nextHtml.replace(imgTag, replaceImgSrc(imgTag, media.source_url));
+    } catch (error) {
+      params.warnings.push(
+        getMediaUploadWarning(`Editor image ${index + 1}`, error),
+      );
+    }
+  }
+
+  return nextHtml;
 };
 
 export const publishArticleForUser = async (params: {
@@ -133,7 +192,7 @@ export const publishArticleForUser = async (params: {
     }
   }
 
-  let htmlForPublish = payload.html;
+  let htmlForPublish = enforceLinkPoliciesInHtml(payload.html, payload.links);
   const inlineImages: Array<{ id: number; sourceUrl: string; altText?: string }> =
     [];
 
@@ -170,8 +229,15 @@ export const publishArticleForUser = async (params: {
     htmlForPublish = injectInlineImagesIntoHtml(htmlForPublish, inlineImages);
   }
 
+  htmlForPublish = await uploadEmbeddedDataImages(htmlForPublish, {
+    title: payload.title,
+    wpConfig,
+    warnings,
+  });
+
   const createdPost = await createPost({
     title: payload.title,
+    slug: payload.slug,
     html: htmlForPublish,
     excerpt: payload.excerpt,
     status: payload.status,

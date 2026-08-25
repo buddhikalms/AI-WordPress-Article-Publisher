@@ -169,3 +169,16 @@ export const adminTokenAdjustSchema = z.object({
   amount: z.number().int().min(-100000).max(100000),
   description: z.preprocess(emptyToUndefined, z.string().trim().max(500).optional()),
 });
+
+export const aiCredentialProviderSchema = z.enum(["openai", "gemini"]);
+
+export const saveAiCredentialSchema = z.object({
+  provider: aiCredentialProviderSchema,
+  apiKey: z.preprocess(emptyToUndefined, z.string().trim().min(8).max(4000).optional()),
+  defaultModel: z.preprocess(emptyToUndefined, z.string().trim().min(1).max(120).optional()),
+  isEnabled: z.boolean().default(true),
+});
+
+export const deleteAiCredentialSchema = z.object({
+  provider: aiCredentialProviderSchema,
+});

@@ -200,8 +200,14 @@ if (!defined('ABSPATH')) {
 							<input type="text" id="aia-manual-title" placeholder="<?php esc_attr_e('Best AI Writing Tools for Agencies', 'ai-article-publisher'); ?>" />
 						</label>
 						<label class="aia-field aia-field--full">
+							<span><?php esc_html_e('Post Slug', 'ai-article-publisher'); ?></span>
+							<input type="text" id="aia-manual-slug" placeholder="<?php esc_attr_e('best-ai-writing-tools-for-agencies', 'ai-article-publisher'); ?>" />
+							<small><?php esc_html_e('This becomes the WordPress permalink slug. Use lowercase words separated by hyphens.', 'ai-article-publisher'); ?></small>
+						</label>
+						<label class="aia-field aia-field--full">
 							<span><?php esc_html_e('Topic Brief', 'ai-article-publisher'); ?></span>
 							<textarea id="aia-manual-brief" rows="6" placeholder="<?php esc_attr_e('Describe the angle, audience, structure, and must-cover points.', 'ai-article-publisher'); ?>"></textarea>
+							<small><?php esc_html_e('Use this description for placement notes. The hyperlink table tells the generator which URLs and anchor text to include, whether each link is required, whether it is dofollow or nofollow, and all published links open in a new tab.', 'ai-article-publisher'); ?></small>
 						</label>
 						<label class="aia-field">
 							<span><?php esc_html_e('Keywords', 'ai-article-publisher'); ?></span>
@@ -243,7 +249,7 @@ if (!defined('ABSPATH')) {
 						<div class="aia-links__header">
 							<div>
 								<h3><?php esc_html_e('Hyperlinks', 'ai-article-publisher'); ?></h3>
-								<p><?php esc_html_e('Set exact links and anchor text you want the model to honor in the article body.', 'ai-article-publisher'); ?></p>
+								<p><?php esc_html_e('Set exact links, required status, anchor text, and dofollow/nofollow rules. Published links open in a new tab.', 'ai-article-publisher'); ?></p>
 							</div>
 							<button type="button" class="button" id="aia-add-link"><?php esc_html_e('Add Link', 'ai-article-publisher'); ?></button>
 						</div>
@@ -303,9 +309,38 @@ if (!defined('ABSPATH')) {
 							<span><?php esc_html_e('Suggested Tags', 'ai-article-publisher'); ?></span>
 							<input type="text" id="aia-manual-tags" placeholder="<?php esc_attr_e('Comma-separated tags', 'ai-article-publisher'); ?>" />
 						</label>
+						<div class="aia-field aia-field--full">
+							<span><?php esc_html_e('Add Image To Article Editor', 'ai-article-publisher'); ?></span>
+							<div class="aia-form-grid">
+								<input type="url" id="aia-editor-image-url" placeholder="<?php esc_attr_e('https://example.com/image.jpg', 'ai-article-publisher'); ?>" />
+								<input type="text" id="aia-editor-image-alt" placeholder="<?php esc_attr_e('Image alt text', 'ai-article-publisher'); ?>" />
+							</div>
+							<div class="aia-actions">
+								<button type="button" class="button" id="aia-insert-editor-image-url"><?php esc_html_e('Insert Image URL', 'ai-article-publisher'); ?></button>
+								<label class="button">
+									<?php esc_html_e('Upload Image Into Article', 'ai-article-publisher'); ?>
+									<input type="file" id="aia-editor-image-file" accept="image/*" hidden />
+								</label>
+								<button type="button" class="button" id="aia-insert-generated-image"><?php esc_html_e('Insert Generated Image', 'ai-article-publisher'); ?></button>
+							</div>
+							<small><?php esc_html_e('You can type directly in Generated HTML after generation. Uploaded editor images are inserted now and uploaded to WordPress media during publish.', 'ai-article-publisher'); ?></small>
+						</div>
 						<label class="aia-field aia-field--full">
 							<span><?php esc_html_e('Generated HTML', 'ai-article-publisher'); ?></span>
-							<textarea id="aia-manual-html" rows="18"></textarea>
+							<?php
+							wp_editor(
+								'',
+								'aia-manual-html',
+								array(
+									'textarea_name' => 'aia-manual-html',
+									'textarea_rows' => 18,
+									'media_buttons' => true,
+									'teeny' => false,
+									'quicktags' => true,
+									'tinymce' => true,
+								)
+							);
+							?>
 						</label>
 					</div>
 					<input type="hidden" id="aia-manual-image-base64" />

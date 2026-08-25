@@ -128,7 +128,7 @@ wordpress-plugin/ai-article-publisher/ai-article-publisher.zip
 - Optional in-post image generation.
 - Publish as draft, publish immediately, or schedule.
 - Google Doc import with front matter, embedded image upload, and SEO metadata support.
-- NewsData category autopilot with OpenAI rewriting.
+- NewsData category autopilot with OpenAI, Gemini, or Ollama rewriting.
 - AIOSEO and Yoast metadata updates.
 - Credentials page for API keys and model settings.
 - Documentation page inside the WordPress admin.
@@ -145,7 +145,7 @@ WordPress Admin > AI Publisher
 Plugin admin pages:
 
 - `AI Publisher > Studio` - generate, import, preview, and publish posts.
-- `AI Publisher > Credentials` - save OpenAI, Claude, NewsData, model, provider, and tone settings.
+- `AI Publisher > Credentials` - save OpenAI, Gemini, Claude, NewsData, model, provider, and tone settings.
 - `AI Publisher > Documentation` - read setup notes, workflow guidance, examples, and troubleshooting.
 
 Plugin REST integration:

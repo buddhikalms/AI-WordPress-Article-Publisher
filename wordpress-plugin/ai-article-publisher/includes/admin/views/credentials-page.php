@@ -39,6 +39,7 @@ if (!defined('ABSPATH')) {
 					<span><?php esc_html_e('Default Provider', 'ai-article-publisher'); ?></span>
 					<select name="settings[default_provider]">
 						<option value="openai" <?php selected($settings['default_provider'], 'openai'); ?>><?php esc_html_e('OpenAI', 'ai-article-publisher'); ?></option>
+						<option value="gemini" <?php selected($settings['default_provider'], 'gemini'); ?>><?php esc_html_e('Gemini', 'ai-article-publisher'); ?></option>
 						<option value="claude_api" <?php selected($settings['default_provider'], 'claude_api'); ?>><?php esc_html_e('Claude API', 'ai-article-publisher'); ?></option>
 						<option value="claude_desktop_manual" <?php selected($settings['default_provider'], 'claude_desktop_manual'); ?>><?php esc_html_e('Claude Desktop Manual', 'ai-article-publisher'); ?></option>
 					</select>
@@ -64,8 +65,16 @@ if (!defined('ABSPATH')) {
 					<input type="text" name="settings[claude_model]" value="<?php echo esc_attr($settings['claude_model']); ?>" placeholder="<?php echo esc_attr(AI_Article_Publisher::DEFAULT_CLAUDE_MODEL); ?>" />
 				</label>
 				<label class="aia-field">
+					<span><?php esc_html_e('Gemini API Key', 'ai-article-publisher'); ?></span>
+					<input type="password" name="settings[gemini_api_key]" value="<?php echo esc_attr($settings['gemini_api_key']); ?>" autocomplete="off" />
+				</label>
+				<label class="aia-field">
+					<span><?php esc_html_e('Gemini Model', 'ai-article-publisher'); ?></span>
+					<input type="text" name="settings[gemini_model]" value="<?php echo esc_attr($settings['gemini_model']); ?>" placeholder="<?php echo esc_attr(AI_Article_Publisher::DEFAULT_GEMINI_MODEL); ?>" />
+				</label>
+				<label class="aia-field">
 					<span><?php esc_html_e('Provider Fallback Order', 'ai-article-publisher'); ?></span>
-					<input type="text" name="settings[provider_fallback_order]" value="<?php echo esc_attr($settings['provider_fallback_order']); ?>" placeholder="openai,claude_api" />
+					<input type="text" name="settings[provider_fallback_order]" value="<?php echo esc_attr($settings['provider_fallback_order']); ?>" placeholder="openai,gemini,claude_api" />
 				</label>
 				<label class="aia-field">
 					<span><?php esc_html_e('Temperature', 'ai-article-publisher'); ?></span>

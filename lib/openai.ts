@@ -2,6 +2,7 @@ import OpenAI from "openai";
 import { HttpError } from "@/lib/errors";
 import {
   generatedArticleResponseSchema,
+  type EditArticleRequest,
   type GenerateArticleRequest,
   type GenerateArticleResponsePayload,
 } from "@/lib/schemas";
@@ -13,15 +14,21 @@ const imageModel = "gpt-image-1";
 
 let openaiClient: OpenAI | null = null;
 
-const getClient = () => {
-  if (!process.env.OPENAI_API_KEY) {
+type OpenAiAuthInput = { apiKey?: string };
+
+const getClient = (apiKey?: string) => {
+  const resolvedApiKey = apiKey?.trim() || process.env.OPENAI_API_KEY;
+  if (!resolvedApiKey) {
     throw new HttpError(
       500,
-      "OPENAI_API_KEY is missing. Add it to .env.local before calling this endpoint.",
+      "OpenAI API key is missing. Add it in AI Keys or configure OPENAI_API_KEY.",
     );
   }
+  if (apiKey?.trim()) {
+    return new OpenAI({ apiKey: resolvedApiKey });
+  }
   if (!openaiClient) {
-    openaiClient = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+    openaiClient = new OpenAI({ apiKey: resolvedApiKey });
   }
   return openaiClient;
 };
@@ -107,6 +114,130 @@ const cleanSuggestedTags = (tags: string[]) =>
     10,
   );
 
+const formatLinkForPrompt = (link: {
+  url: string;
+  anchorText: string;
+  required: boolean;
+  followType: "dofollow" | "nofollow";
+}, index: number) => {
+  const rel = link.followType === "nofollow" ? "noopener noreferrer nofollow" : "noopener noreferrer";
+  return [
+    `${index + 1}. URL: ${link.url}`,
+    `Anchor text: "${link.anchorText}"`,
+    `Required: ${link.required ? "yes, include exactly once" : "optional, include only when natural"}`,
+    `Follow rule: ${link.followType}`,
+    `Required HTML policy: <a href="${link.url}" target="_blank" rel="${rel}">${link.anchorText}</a>`,
+  ].join(" | ");
+};
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  Boolean(value) && typeof value === "object" && !Array.isArray(value);
+
+const asRecord = (value: unknown): Record<string, unknown> =>
+  isRecord(value) ? value : {};
+
+const asString = (value: unknown, fallback = "") =>
+  typeof value === "string" ? value : fallback;
+
+const asOptionalUrl = (value: unknown) =>
+  typeof value === "string" && value.trim() ? value : undefined;
+
+const asStringArray = (value: unknown): string[] => {
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => (typeof item === "string" ? item.trim() : ""))
+      .filter(Boolean);
+  }
+  if (typeof value === "string") {
+    return value
+      .split(",")
+      .map((item) => item.trim())
+      .filter(Boolean);
+  }
+  return [];
+};
+
+export const normalizeGeneratedArticleCandidate = (
+  candidate: unknown,
+  fallbackTitle: string,
+  fallbackExcerpt: string,
+  fallbackKeyword: string,
+) => {
+  const root = asRecord(candidate);
+  const article =
+    asRecord(root.article).html || asRecord(root.article).meta
+      ? asRecord(root.article)
+      : asRecord(root.draft).html || asRecord(root.draft).meta
+      ? asRecord(root.draft)
+      : root;
+  const meta = asRecord(article.meta);
+  const rootSeo = asRecord(article.seo);
+  const seo = Object.keys(asRecord(meta.seo)).length > 0 ? asRecord(meta.seo) : rootSeo;
+  const og = asRecord(seo.og);
+  const twitter = asRecord(seo.twitter);
+  const title =
+    asString(meta.title) ||
+    asString(article.title) ||
+    asString(root.title) ||
+    fallbackTitle;
+  const excerpt =
+    asString(meta.excerpt) ||
+    asString(article.excerpt) ||
+    asString(article.summary) ||
+    asString(root.excerpt) ||
+    fallbackExcerpt ||
+    title;
+  const seoTitle =
+    asString(seo.seoTitle) ||
+    asString(seo.title) ||
+    asString(rootSeo.seoTitle) ||
+    title;
+  const metaDescription =
+    asString(seo.metaDescription) ||
+    asString(seo.description) ||
+    asString(rootSeo.metaDescription) ||
+    excerpt;
+  const focusKeyword =
+    asString(seo.focusKeyword) ||
+    asString(rootSeo.focusKeyword) ||
+    fallbackKeyword;
+
+  return {
+    html: asString(article.html) || asString(article.content) || "",
+    meta: {
+      title,
+      excerpt,
+      suggestedTags:
+        asStringArray(meta.suggestedTags).length > 0
+          ? asStringArray(meta.suggestedTags)
+          : asStringArray(meta.tags).length > 0
+          ? asStringArray(meta.tags)
+          : asStringArray(article.suggestedTags).length > 0
+          ? asStringArray(article.suggestedTags)
+          : asStringArray(article.tags),
+      seo: {
+        seoTitle,
+        metaDescription,
+        focusKeyword,
+        canonicalUrl: asOptionalUrl(seo.canonicalUrl || rootSeo.canonicalUrl),
+        og: {
+          title: asString(og.title) || seoTitle,
+          description: asString(og.description) || metaDescription,
+          imageUrl: asOptionalUrl(og.imageUrl),
+        },
+        twitter: {
+          title: asString(twitter.title) || asString(og.title) || seoTitle,
+          description:
+            asString(twitter.description) ||
+            asString(og.description) ||
+            metaDescription,
+          imageUrl: asOptionalUrl(twitter.imageUrl || og.imageUrl),
+        },
+      },
+    },
+  };
+};
+
 export const hydrateGeneratedMeta = (
   meta: GenerateArticleResponsePayload["meta"],
   fallbackTitle: string,
@@ -154,7 +285,7 @@ export const hydrateGeneratedMeta = (
 };
 
 export const generateArticleDraft = async (
-  input: GenerateArticleRequest,
+  input: GenerateArticleRequest & OpenAiAuthInput,
 ): Promise<GenerateArticleResponsePayload> => {
   const requiredLinks = input.links.filter((link) => link.required);
   const optionalLinks = input.links.filter((link) => !link.required);
@@ -162,24 +293,18 @@ export const generateArticleDraft = async (
   const requiredLinksPrompt =
     requiredLinks.length > 0
       ? requiredLinks
-          .map(
-            (link, index) =>
-              `${index + 1}. <a href="${link.url}">${link.anchorText}</a>`,
-          )
+          .map(formatLinkForPrompt)
           .join("\n")
       : "None";
 
   const optionalLinksPrompt =
     optionalLinks.length > 0
       ? optionalLinks
-          .map(
-            (link, index) =>
-              `${index + 1}. <a href="${link.url}">${link.anchorText}</a>`,
-          )
+          .map(formatLinkForPrompt)
           .join("\n")
       : "None";
 
-  const client = getClient();
+  const client = getClient(input.apiKey);
   const completion = await client.chat.completions.create({
     model: input.model?.trim() || defaultTextModel,
     temperature: 0.4,
@@ -220,6 +345,9 @@ export const generateArticleDraft = async (
           "- html MUST be valid WordPress-ready HTML only (no markdown, no code fences).",
           "- Include each required link exactly once using the exact anchor text and URL.",
           "- Optional links may be included only when natural.",
+          '- Every link you include must open in a new tab with target="_blank".',
+          '- Dofollow links must use rel="noopener noreferrer". Nofollow links must use rel="noopener noreferrer nofollow".',
+          "- Follow the link table exactly for URL, anchor text, required/optional status, and dofollow/nofollow status.",
           "- Use h2/h3 headings, short paragraphs, and include a conclusion section.",
           "- Add an FAQ section at the end.",
           "- Rewrite weak phrasing so the article reads like a skilled human writer, not AI-generated copy.",
@@ -275,6 +403,117 @@ export const generateArticleDraft = async (
       generated.meta,
       input.title,
       input.brief || input.title,
+      input.focusKeyword,
+    ),
+  };
+};
+
+export const editArticleDraft = async (
+  input: EditArticleRequest & OpenAiAuthInput,
+): Promise<GenerateArticleResponsePayload> => {
+  const requiredLinks = input.links.filter((link) => link.required);
+  const requiredLinksPrompt =
+    requiredLinks.length > 0
+      ? requiredLinks
+          .map(formatLinkForPrompt)
+          .join("\n")
+      : "None";
+
+  const client = getClient(input.apiKey);
+  const completion = await client.chat.completions.create({
+    model: input.model?.trim() || defaultTextModel,
+    temperature: 0.25,
+    response_format: { type: "json_object" },
+    messages: [
+      {
+        role: "system",
+        content: [
+          "You are a senior WordPress editor revising an existing SEO article.",
+          "Apply the user's edit instructions precisely while preserving useful structure, factual consistency, and WordPress-ready HTML.",
+          "Do not add markdown fences or commentary outside JSON.",
+        ].join(" "),
+      },
+      {
+        role: "user",
+        content: [
+          "Return a JSON object with this exact shape:",
+          "{",
+          '  "html": "<valid wordpress html>",',
+          '  "meta": {',
+          '    "title": "string",',
+          '    "excerpt": "string",',
+          '    "suggestedTags": ["string"],',
+          '    "seo": {',
+          '      "seoTitle": "string",',
+          '      "metaDescription": "string",',
+          '      "focusKeyword": "string",',
+          '      "canonicalUrl": "optional absolute url",',
+          '      "og": { "title": "string", "description": "string", "imageUrl": "optional absolute url" },',
+          '      "twitter": { "title": "string", "description": "string", "imageUrl": "optional absolute url" }',
+          "    }",
+          "  }",
+          "}",
+          "",
+          "Rules:",
+          "- Return revised WordPress-ready HTML only in html.",
+          "- Keep each required link exactly once using the exact anchor text and URL.",
+          '- Every link you include must open in a new tab with target="_blank".',
+          '- Dofollow links must use rel="noopener noreferrer". Nofollow links must use rel="noopener noreferrer nofollow".',
+          "- Follow the link table exactly for URL, anchor text, required/optional status, and dofollow/nofollow status.",
+          "- Preserve strong sections unless the edit instructions ask to restructure.",
+          "- Update title, excerpt, suggestedTags, and SEO fields to match the revised article.",
+          "- Keep the writing natural, specific, and free of generic AI filler.",
+          "",
+          `Current title: ${input.title}`,
+          `Current excerpt: ${input.excerpt || ""}`,
+          `Original brief: ${input.brief}`,
+          `Keywords: ${input.keywords.join(", ")}`,
+          `Focus keyword: ${input.focusKeyword}`,
+          `Tone: ${input.tone}`,
+          `Target word count: ${input.wordCount}`,
+          "",
+          "Required links:",
+          requiredLinksPrompt,
+          "",
+          "Edit instructions:",
+          input.editPrompt,
+          "",
+          "Current article HTML:",
+          input.html,
+        ].join("\n"),
+      },
+    ],
+  });
+
+  const content = completion.choices[0]?.message?.content;
+  if (!content) {
+    throw new HttpError(502, "OpenAI returned an empty edited draft response.");
+  }
+
+  const parsed = parseJsonFromModel(content);
+  const validation = generatedArticleResponseSchema.safeParse(parsed);
+  if (!validation.success) {
+    throw new HttpError(
+      502,
+      "OpenAI response did not match the expected edited article schema.",
+      validation.error.flatten(),
+    );
+  }
+
+  const generated = validation.data;
+  if (generated.html.includes("```")) {
+    throw new HttpError(
+      502,
+      "OpenAI returned markdown fences instead of pure HTML.",
+    );
+  }
+
+  return {
+    ...generated,
+    meta: hydrateGeneratedMeta(
+      generated.meta,
+      input.title,
+      input.excerpt || input.brief || input.title,
       input.focusKeyword,
     ),
   };
@@ -463,11 +702,12 @@ export const rewriteNewsAsOriginalArticle = async (input: {
   category: string;
   tone: string;
   wordCount: number;
-  provider?: "openai" | "ollama";
+  provider?: "openai" | "gemini" | "ollama";
   model?: string;
+  apiKey?: string;
   article: NewsSourceArticle;
 }): Promise<GenerateArticleResponsePayload> => {
-  const client = getClient();
+  const client = getClient(input.apiKey);
   const completion = await client.chat.completions.create({
     model: input.model?.trim() || defaultTextModel,
     temperature: 0.45,

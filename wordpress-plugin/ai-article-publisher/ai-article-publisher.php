@@ -33,6 +33,7 @@ final class AI_Article_Publisher
 	const DEFAULT_TEXT_MODEL = 'gpt-4.1-mini';
 	const IMAGE_MODEL = 'gpt-image-1';
 	const DEFAULT_CLAUDE_MODEL = 'claude-3-5-sonnet-latest';
+	const DEFAULT_GEMINI_MODEL = 'gemini-2.5-flash';
 	const LOG_OPTION_KEY = 'aia_publisher_logs';
 
 	/** @var AIA_Admin_Screen */
@@ -79,7 +80,9 @@ final class AI_Article_Publisher
 			'openai_image_model' => self::IMAGE_MODEL,
 			'claude_api_key' => '',
 			'claude_model' => self::DEFAULT_CLAUDE_MODEL,
-			'provider_fallback_order' => 'openai,claude_api',
+			'gemini_api_key' => '',
+			'gemini_model' => self::DEFAULT_GEMINI_MODEL,
+			'provider_fallback_order' => 'openai,gemini,claude_api',
 			'temperature' => '0.4',
 			'max_tokens' => '4096',
 			'newsdata_api_key' => '',
@@ -114,7 +117,9 @@ final class AI_Article_Publisher
 			'openai_image_model' => isset($settings['openai_image_model']) ? sanitize_text_field($settings['openai_image_model']) : self::IMAGE_MODEL,
 			'claude_api_key' => isset($settings['claude_api_key']) ? trim((string) $settings['claude_api_key']) : '',
 			'claude_model' => isset($settings['claude_model']) ? sanitize_text_field($settings['claude_model']) : self::DEFAULT_CLAUDE_MODEL,
-			'provider_fallback_order' => isset($settings['provider_fallback_order']) ? $this->sanitize_provider_order($settings['provider_fallback_order']) : 'openai,claude_api',
+			'gemini_api_key' => isset($settings['gemini_api_key']) ? trim((string) $settings['gemini_api_key']) : '',
+			'gemini_model' => isset($settings['gemini_model']) ? sanitize_text_field($settings['gemini_model']) : self::DEFAULT_GEMINI_MODEL,
+			'provider_fallback_order' => isset($settings['provider_fallback_order']) ? $this->sanitize_provider_order($settings['provider_fallback_order']) : 'openai,gemini,claude_api',
 			'temperature' => (string) $temperature,
 			'max_tokens' => (string) $max_tokens,
 			'newsdata_api_key' => isset($settings['newsdata_api_key']) ? trim((string) $settings['newsdata_api_key']) : '',
@@ -124,7 +129,7 @@ final class AI_Article_Publisher
 
 	public function get_provider_ids()
 	{
-		return array('openai', 'claude_api', 'claude_desktop_manual');
+		return array('openai', 'gemini', 'claude_api', 'claude_desktop_manual');
 	}
 
 	public function get_recent_logs()
@@ -475,7 +480,7 @@ final class AI_Article_Publisher
 			}
 		}
 		$clean = array_values(array_unique($clean));
-		return empty($clean) ? 'openai,claude_api' : implode(',', $clean);
+		return empty($clean) ? 'openai,gemini,claude_api' : implode(',', $clean);
 	}
 
 	private function sanitize_scheduled_at($value, $status)
@@ -709,6 +714,8 @@ final class AI_Article_Publisher
 	{
 		$settings = $this->get_settings();
 		switch ($provider_id) {
+			case 'gemini':
+				return new AIA_Gemini_Provider($settings);
 			case 'claude_api':
 				return new AIA_Claude_Api_Provider($settings);
 			case 'claude_desktop_manual':
@@ -769,7 +776,7 @@ final class AI_Article_Publisher
 		if ($last_error) {
 			throw $last_error;
 		}
-		throw new AI_Article_Publisher_Error('No API provider is configured. Save an OpenAI or Claude API key first.', 500);
+		throw new AI_Article_Publisher_Error('No API provider is configured. Save an OpenAI, Gemini, or Claude API key first.', 500);
 	}
 
 	private function add_log($provider, $action, $status, $error_message = '', $post_id = 0)
@@ -864,6 +871,24 @@ final class AI_Article_Publisher
 		return $decoded;
 	}
 
+	private function format_link_for_prompt($link, $index)
+	{
+		$follow_type = (isset($link['followType']) && 'nofollow' === $link['followType']) ? 'nofollow' : 'dofollow';
+		$rel = ('nofollow' === $follow_type) ? 'noopener noreferrer nofollow' : 'noopener noreferrer';
+		$required = !empty($link['required']) ? 'yes, include exactly once' : 'optional, include only when natural';
+		return sprintf(
+			'%d. URL: %s | Anchor text: "%s" | Required: %s | Follow rule: %s | Required HTML policy: <a href="%s" target="_blank" rel="%s">%s</a>',
+			$index + 1,
+			$link['url'],
+			$link['anchorText'],
+			$required,
+			$follow_type,
+			$link['url'],
+			$rel,
+			$link['anchorText']
+		);
+	}
+
 	private function generate_article_draft($input)
 	{
 		$required_links = array_values(array_filter($input['links'], array($this, 'is_required_link')));
@@ -872,7 +897,7 @@ final class AI_Article_Publisher
 			"\n",
 			array_map(
 				function ($link, $index) {
-					return sprintf('%d. <a href="%s">%s</a>', $index + 1, $link['url'], $link['anchorText']);
+					return $this->format_link_for_prompt($link, $index);
 				},
 				$required_links,
 				array_keys($required_links)
@@ -882,7 +907,7 @@ final class AI_Article_Publisher
 			"\n",
 			array_map(
 				function ($link, $index) {
-					return sprintf('%d. <a href="%s">%s</a>', $index + 1, $link['url'], $link['anchorText']);
+					return $this->format_link_for_prompt($link, $index);
 				},
 				$optional_links,
 				array_keys($optional_links)
@@ -931,6 +956,9 @@ final class AI_Article_Publisher
 							'- html MUST be valid WordPress-ready HTML only (no markdown, no code fences).',
 							'- Include each required link exactly once using the exact anchor text and URL.',
 							'- Optional links may be included only when natural.',
+							'- Every link you include must open in a new tab with target="_blank".',
+							'- Dofollow links must use rel="noopener noreferrer". Nofollow links must use rel="noopener noreferrer nofollow".',
+							'- Follow the link table exactly for URL, anchor text, required/optional status, and dofollow/nofollow status.',
 							'- Use h2/h3 headings, short paragraphs, and include a conclusion section.',
 							'- Add an FAQ section at the end.',
 							'- Rewrite weak phrasing so the article reads like a skilled human writer, not AI-generated copy.',
@@ -974,30 +1002,43 @@ final class AI_Article_Publisher
 
 	private function sanitize_generated_article_payload($parsed, $fallback_title, $fallback_focus_keyword)
 	{
-		$html = $this->require_text(isset($parsed['html']) ? $parsed['html'] : '', 'Generated HTML is missing.', 40);
+		if (isset($parsed['article']) && is_array($parsed['article'])) {
+			$parsed = $parsed['article'];
+		} elseif (isset($parsed['draft']) && is_array($parsed['draft'])) {
+			$parsed = $parsed['draft'];
+		}
+		$html_input = isset($parsed['html']) ? $parsed['html'] : (isset($parsed['content']) ? $parsed['content'] : '');
+		$html = $this->require_text($html_input, 'Generated HTML is missing.', 40);
 		if (false !== strpos($html, '```')) {
 			throw new AI_Article_Publisher_Error('AI returned markdown fences instead of pure HTML.', 502);
 		}
 
 		$meta = isset($parsed['meta']) && is_array($parsed['meta']) ? $parsed['meta'] : array();
-		$seo = isset($meta['seo']) && is_array($meta['seo']) ? $meta['seo'] : array();
+		$seo = isset($meta['seo']) && is_array($meta['seo']) ? $meta['seo'] : (isset($parsed['seo']) && is_array($parsed['seo']) ? $parsed['seo'] : array());
+		$excerpt_input = isset($meta['excerpt'])
+			? $meta['excerpt']
+			: (isset($parsed['excerpt']) ? $parsed['excerpt'] : (isset($parsed['summary']) ? $parsed['summary'] : $fallback_title));
 		$excerpt = $this->clean_summary_text(
-			$this->require_text(isset($meta['excerpt']) ? $meta['excerpt'] : '', 'Excerpt is missing from the generated response.', 1),
+			$this->require_text($excerpt_input, 'Excerpt is missing from the generated response.', 1),
 			$fallback_title,
 			180
 		);
-		$title = $this->clean_headline_text(isset($meta['title']) ? $meta['title'] : '', $fallback_title, 72);
+		$title_input = isset($meta['title']) ? $meta['title'] : (isset($parsed['title']) ? $parsed['title'] : $fallback_title);
+		$title = $this->clean_headline_text($title_input, $fallback_title, 72);
+		$suggested_tags = isset($meta['suggestedTags'])
+			? $meta['suggestedTags']
+			: (isset($meta['tags']) ? $meta['tags'] : (isset($parsed['suggestedTags']) ? $parsed['suggestedTags'] : (isset($parsed['tags']) ? $parsed['tags'] : array())));
 
 		$payload = array(
 			'html' => $html,
 			'meta' => array(
 				'title' => $title,
 				'excerpt' => $excerpt,
-				'suggestedTags' => $this->sanitize_suggested_tags(isset($meta['suggestedTags']) ? $meta['suggestedTags'] : array()),
+				'suggestedTags' => $this->sanitize_suggested_tags($suggested_tags),
 				'seo' => array(
-					'seoTitle' => $this->normalize_meta_text(isset($seo['seoTitle']) ? $seo['seoTitle'] : ''),
-					'metaDescription' => $this->normalize_meta_text(isset($seo['metaDescription']) ? $seo['metaDescription'] : ''),
-					'focusKeyword' => $this->normalize_meta_text(isset($seo['focusKeyword']) ? $seo['focusKeyword'] : ''),
+					'seoTitle' => $this->normalize_meta_text(isset($seo['seoTitle']) ? $seo['seoTitle'] : (isset($seo['title']) ? $seo['title'] : $title)),
+					'metaDescription' => $this->normalize_meta_text(isset($seo['metaDescription']) ? $seo['metaDescription'] : (isset($seo['description']) ? $seo['description'] : $excerpt)),
+					'focusKeyword' => $this->normalize_meta_text(isset($seo['focusKeyword']) ? $seo['focusKeyword'] : $fallback_focus_keyword),
 					'additionalKeywords' => $this->sanitize_string_list(isset($seo['additionalKeywords']) ? $seo['additionalKeywords'] : array()),
 					'canonicalUrl' => $this->sanitize_optional_url(isset($seo['canonicalUrl']) ? $seo['canonicalUrl'] : ''),
 					'og' => array(
@@ -1382,7 +1423,7 @@ final class AI_Article_Publisher
 			$payload = $this->read_payload();
 			$title = $this->require_text(isset($payload['title']) ? $payload['title'] : '', 'Title is required.', 3);
 			$brief = $this->sanitize_text(isset($payload['brief']) ? $payload['brief'] : '');
-			$html = wp_kses_post($this->require_text(isset($payload['html']) ? $payload['html'] : '', 'Generated HTML is required.', 40));
+			$html = $this->sanitize_editor_html_for_processing($this->require_text(isset($payload['html']) ? $payload['html'] : '', 'Generated HTML is required.', 40));
 			$excerpt = $this->require_text(isset($payload['excerpt']) ? $payload['excerpt'] : '', 'Excerpt is required.', 1);
 			$status = $this->sanitize_status(isset($payload['status']) ? $payload['status'] : 'draft');
 			$scheduled_at = $this->sanitize_scheduled_at(isset($payload['scheduledAt']) ? $payload['scheduledAt'] : '', $status);
@@ -1439,6 +1480,7 @@ final class AI_Article_Publisher
 				}
 				$html_for_publish = $this->inject_inline_images_into_html($html_for_publish, $inline_images);
 			}
+			$html_for_publish = wp_kses_post($this->upload_embedded_data_images($html_for_publish, $title));
 
 			$seo_provider = $this->sanitize_seo_provider(isset($payload['seoProvider']) ? $payload['seoProvider'] : 'None');
 			$seo_payload = $this->hydrate_seo_payload(
@@ -1584,6 +1626,53 @@ final class AI_Article_Publisher
 			'id' => (int) $attachment_id,
 			'source_url' => wp_get_attachment_url($attachment_id),
 		);
+	}
+
+	private function sanitize_editor_html_for_processing($html)
+	{
+		$allowed_protocols = array_values(array_unique(array_merge(wp_allowed_protocols(), array('data'))));
+		return wp_kses((string) $html, 'post', $allowed_protocols);
+	}
+
+	private function replace_img_src_attribute($image_tag, $source_url)
+	{
+		$source_url = esc_url($source_url);
+		if (preg_match('/\bsrc\s*=/i', $image_tag)) {
+			return preg_replace('/\bsrc\s*=\s*([\'"])(.*?)\1/i', 'src="' . $source_url . '"', $image_tag, 1);
+		}
+		return preg_replace('/>$/', ' src="' . $source_url . '">', $image_tag, 1);
+	}
+
+	private function upload_embedded_data_images($html, $title)
+	{
+		if (!preg_match_all('/<img\b[^>]*\bsrc\s*=\s*([\'"])(data:[^\'"]+)\1[^>]*>/i', (string) $html, $matches, PREG_SET_ORDER)) {
+			return $html;
+		}
+
+		$updated_html = (string) $html;
+		foreach ($matches as $index => $match) {
+			$image_tag = (string) $match[0];
+			$parsed = $this->parse_inline_base64_image_source((string) $match[2]);
+			if (empty($parsed)) {
+				continue;
+			}
+
+			$media = $this->upload_base64_image_to_media(
+				$parsed['imageBase64'],
+				$parsed['mimeType'],
+				sprintf('%s editor image %d', $title, $index + 1),
+				$this->slugify($title) . '-editor-' . ($index + 1) . '.png',
+				sanitize_text_field($this->get_html_attribute($image_tag, 'alt'))
+			);
+
+			$updated_html = str_replace(
+				$image_tag,
+				$this->replace_img_src_attribute($image_tag, (string) $media['source_url']),
+				$updated_html
+			);
+		}
+
+		return $updated_html;
 	}
 
 	private function create_post($payload)

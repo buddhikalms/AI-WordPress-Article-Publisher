@@ -3,14 +3,14 @@
 ## Admin Pages
 
 - `Studio`: generate articles, import Google Docs, run News Autopilot, preview output, and publish posts.
-- `Credentials`: save the OpenAI key, optional NewsData key, and the default tone/model values.
+- `Credentials`: save OpenAI, Gemini, Claude, optional NewsData keys, and the default tone/model values.
 - `Documentation`: quick-start notes, workflow usage, front matter examples, and troubleshooting.
 
 ## Setup
 
 1. Activate the plugin in WordPress.
 2. Open `AI Publisher > Credentials`.
-3. Save the `OpenAI API Key`.
+3. Save the key for your preferred text provider, such as `OpenAI API Key` or `Gemini API Key`.
 4. Save the `NewsData API Key` only if you plan to use News Autopilot.
 5. Return to `AI Publisher > Studio` to create or import posts.
 
@@ -85,7 +85,7 @@ Your article body here.
 
 ## Troubleshooting
 
-- If OpenAI actions fail, confirm the API key is saved on the `Credentials` page.
+- If AI generation fails, confirm the selected provider key and model are saved on the `Credentials` page.
 - If Google Doc import fails, make sure the document is public and not behind a Google sign-in wall.
 - If News Autopilot returns empty results, confirm the NewsData key is active and try a broader query.
 - If SEO updates do not show immediately, your SEO plugin may require reindexing or rebuild steps.

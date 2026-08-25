@@ -71,6 +71,7 @@ final class AIA_Admin_Screen
 		$asset_base = plugin_dir_url($plugin_file) . 'assets/';
 
 		wp_enqueue_style('aia-publisher-admin', $asset_base . 'admin.css', array(), AI_Article_Publisher::VERSION);
+		wp_enqueue_editor();
 		wp_enqueue_script('aia-publisher-admin', $asset_base . 'admin.js', array(), AI_Article_Publisher::VERSION, true);
 		wp_add_inline_style('aia-publisher-admin', $this->get_notice_suppression_css());
 
@@ -149,6 +150,11 @@ final class AIA_Admin_Screen
 				'is_ready' => !empty($settings['claude_api_key']),
 			),
 			array(
+				'label' => __('Gemini', 'ai-article-publisher'),
+				'value' => !empty($settings['gemini_api_key']) ? __('Connected', 'ai-article-publisher') : __('Optional', 'ai-article-publisher'),
+				'is_ready' => !empty($settings['gemini_api_key']),
+			),
+			array(
 				'label' => __('Claude Desktop', 'ai-article-publisher'),
 				'value' => __('Manual bridge ready', 'ai-article-publisher'),
 				'is_ready' => true,
@@ -221,6 +227,12 @@ final class AIA_Admin_Screen
 				'status' => !empty($settings['claude_api_key']) ? __('Saved', 'ai-article-publisher') : __('Optional', 'ai-article-publisher'),
 				'description' => __('Only needed for official Anthropic Messages API generation.', 'ai-article-publisher'),
 				'is_ready' => !empty($settings['claude_api_key']),
+			),
+			array(
+				'label' => __('Gemini API Key', 'ai-article-publisher'),
+				'status' => !empty($settings['gemini_api_key']) ? __('Saved', 'ai-article-publisher') : __('Optional', 'ai-article-publisher'),
+				'description' => __('Only needed when Gemini is selected for article generation or rewrites.', 'ai-article-publisher'),
+				'is_ready' => !empty($settings['gemini_api_key']),
 			),
 			array(
 				'label' => __('Default Provider', 'ai-article-publisher'),

@@ -17,7 +17,20 @@ const optionalStringSchema = z.preprocess(
   z.string().trim().optional(),
 );
 
-export const aiProviderSchema = z.enum(["openai", "ollama"]);
+const optionalSlugSchema = z.preprocess(
+  emptyToUndefined,
+  z
+    .string()
+    .trim()
+    .max(120, "Slug must be 120 characters or less.")
+    .regex(
+      /^[a-z0-9]+(?:-[a-z0-9]+)*$/,
+      "Slug may only contain lowercase letters, numbers, and hyphens.",
+    )
+    .optional(),
+);
+
+export const aiProviderSchema = z.enum(["openai", "gemini", "ollama"]);
 export const seoProviderSchema = z.enum(["AIOSEO", "Yoast", "None"]);
 export const publishStatusSchema = z.enum(["draft", "publish", "future"]);
 
@@ -53,6 +66,12 @@ export const generateArticleRequestSchema = z.object({
   links: z.array(hyperlinkSchema).max(50),
   provider: aiProviderSchema.default("openai"),
   model: optionalStringSchema,
+});
+
+export const editArticleRequestSchema = generateArticleRequestSchema.extend({
+  html: z.string().trim().min(40, "Generated article HTML is required."),
+  excerpt: optionalStringSchema,
+  editPrompt: z.string().trim().min(8, "Edit instructions are required.").max(4000),
 });
 
 export const socialMetaSchema = z.object({
@@ -99,7 +118,9 @@ export const publishRequestSchema = z
   .object({
     siteId: optionalIdSchema,
     title: z.string().trim().min(3),
+    slug: optionalSlugSchema,
     html: z.string().trim().min(40),
+    links: z.array(hyperlinkSchema).max(50).default([]),
     brief: optionalStringSchema,
     excerpt: z.string().trim().min(1),
     status: publishStatusSchema,
@@ -304,6 +325,7 @@ export const newsAutoPublishRequestSchema = z
   });
 
 export type GenerateArticleRequest = z.infer<typeof generateArticleRequestSchema>;
+export type EditArticleRequest = z.infer<typeof editArticleRequestSchema>;
 export type GenerateArticleResponsePayload = z.infer<
   typeof generatedArticleResponseSchema
 >;

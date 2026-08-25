@@ -64,6 +64,19 @@ In ChatGPT's connector/MCP settings, add a custom connector pointing at
 `.well-known` metadata above, register itself, and walk the user through the
 sign-in + consent screen described above the first time they use it.
 
+The SaaS dashboard also includes ChatGPT handoff buttons:
+
+- **Connect ChatGPT** copies `{APP_URL}/api/mcp` and opens ChatGPT so the user
+  can add/approve the custom connector.
+- **Open Draft In ChatGPT** copies a prepared command containing the current
+  title, brief, edit instructions, selected destinations, and generated HTML,
+  then opens ChatGPT.
+- **Copy ChatGPT Command** copies the same command without opening a new tab.
+
+ChatGPT does not allow this app to silently install a connector or send a
+message into the user's ChatGPT session. The user must approve the connector in
+ChatGPT and paste/run the command there.
+
 For production, `APP_URL`, `NEXTAUTH_URL`, and `NEXT_PUBLIC_APP_URL` should all
 use the public HTTPS origin ChatGPT can reach, for example
 `https://example.com`. After pulling changes on the server, run:

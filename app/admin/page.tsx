@@ -1,8 +1,9 @@
-"use client";
+﻿"use client";
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
+import AiCredentialsPanel from "@/components/AiCredentialsPanel";
 import DashboardLoading from "@/components/DashboardLoading";
 import DashboardShell, { type DashboardNavItem } from "@/components/DashboardShell";
 import EmptyState from "@/components/EmptyState";
@@ -56,6 +57,58 @@ type McpLogEntry = {
   user: { email: string | null; name: string | null };
 };
 
+type WpStatusItem = {
+  site: {
+    id: string;
+    name: string;
+    baseUrl: string;
+    username: string;
+    updatedAt: string;
+    owner: string;
+  };
+  plugins:
+    | {
+        ok: true;
+        total: number;
+        active: number;
+        updateMarkers: number;
+        items: Array<{
+          plugin?: string;
+          status?: string;
+          name?: string;
+          version?: string;
+          author?: string;
+        }>;
+      }
+    | { ok: false; error: string };
+  themes:
+    | {
+        ok: true;
+        total: number;
+        active: number;
+        updateMarkers: number;
+        items: Array<{
+          stylesheet?: string;
+          status?: string;
+          name?: string | { raw?: string; rendered?: string };
+          version?: string;
+          author?: string | { raw?: string; rendered?: string };
+        }>;
+      }
+    | { ok: false; error: string };
+  health: {
+    tests: Array<{
+      status?: string;
+      label?: string;
+      description?: string;
+      badge?: { label?: string; color?: string };
+      test?: string;
+    }>;
+    warnings: string[];
+    needsAttention: number;
+  };
+};
+
 type EditablePackageState = {
   id: string;
   name: string;
@@ -77,7 +130,9 @@ export default function AdminPage() {
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [packages, setPackages] = useState<AdminPackage[]>([]);
   const [mcpLogs, setMcpLogs] = useState<McpLogEntry[]>([]);
+  const [wpStatuses, setWpStatuses] = useState<WpStatusItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadingWpStatus, setLoadingWpStatus] = useState(false);
   const [toast, setToast] = useState<{ type: "success" | "error" | "info"; message: string } | null>(null);
   const [pkgName, setPkgName] = useState("");
   const [pkgSlug, setPkgSlug] = useState("");
@@ -102,6 +157,12 @@ export default function AdminPage() {
 
   const parseFeatureList = (value: string) =>
     value.split(",").map((feature) => feature.trim()).filter(Boolean);
+
+  const renderWpText = (value?: string | { raw?: string; rendered?: string }) => {
+    if (!value) return "-";
+    if (typeof value === "string") return value;
+    return value.rendered || value.raw || "-";
+  };
 
   const loadData = async () => {
     setLoading(true);
@@ -206,6 +267,29 @@ export default function AdminPage() {
         type: "error",
         message: err instanceof Error ? err.message : "Failed to adjust tokens.",
       });
+    }
+  };
+
+  const loadWordPressStatus = async () => {
+    try {
+      setLoadingWpStatus(true);
+      const response = await fetch("/api/admin/wordpress-status", {
+        cache: "no-store",
+      });
+      const payload = await response.json();
+      if (!response.ok) {
+        throw new Error(payload?.error || "Failed to load WordPress status.");
+      }
+      setWpStatuses(payload.sites || []);
+      setToast({ type: "success", message: "WordPress status refreshed." });
+    } catch (err) {
+      setToast({
+        type: "error",
+        message:
+          err instanceof Error ? err.message : "Failed to load WordPress status.",
+      });
+    } finally {
+      setLoadingWpStatus(false);
     }
   };
 
@@ -335,7 +419,8 @@ export default function AdminPage() {
       tokenBalance={null}
       navItems={
         [
-          { href: "/admin", label: "Admin", hint: "Platform administration", group: "Operations", icon: "admin" },
+          { href: "/admin", label: "Admin", hint: "Platform, models, users, packages", group: "Operations", icon: "admin" },
+          { href: "/admin#ai-keys", label: "Platform AI", hint: "Admin fallback model keys", group: "Operations", icon: "settings" },
           { href: "/app/dashboard", label: "Workspace", hint: "Content operations", group: "Workspace", icon: "workspace" },
           { href: "/billing", label: "Billing", hint: "Customer packages", group: "Revenue", icon: "billing" },
           { href: "/account", label: "Account", hint: "Profile settings", group: "Settings", icon: "sites" },
@@ -344,7 +429,14 @@ export default function AdminPage() {
     >
       <section className="grid gap-4 xl:grid-cols-[minmax(0,1.1fr)_420px]">
         <div className="space-y-4">
-          <section className="panel px-4 py-4 md:px-5">
+                    <AiCredentialsPanel
+            endpoint="/api/admin/ai-credentials"
+            title="Platform AI provider keys"
+            subtitle="Save admin-managed fallback keys for OpenAI and Gemini. User keys still take priority when a user has their own provider key enabled."
+            scopeLabel="Admin"
+          />
+
+<section className="panel px-4 py-4 md:px-5">
             <div className="grid gap-4 md:grid-cols-3">
               <div className="panel-muted px-4 py-4">
                 <p className="eyebrow">Users</p>
@@ -501,6 +593,199 @@ export default function AdminPage() {
         </div>
 
         <div className="space-y-4">
+          <section className="panel px-4 py-4 md:px-5">
+            <div className="section-header">
+              <div>
+                <p className="eyebrow">WordPress Status</p>
+                <h2 className="mt-1 text-sm font-semibold text-slate-950">
+                  Plugins, themes, and updates
+                </h2>
+                <p className="mt-1 text-xs leading-5 text-slate-500">
+                  Admin-only checks. These endpoints are not exposed through MCP.
+                </p>
+              </div>
+              <button
+                type="button"
+                className="button-secondary"
+                onClick={() => void loadWordPressStatus()}
+                disabled={loadingWpStatus}
+              >
+                {loadingWpStatus ? "Checking..." : "Check now"}
+              </button>
+            </div>
+
+            {wpStatuses.length === 0 ? (
+              <div className="mt-4">
+                <EmptyState
+                  title="No WordPress status loaded"
+                  description="Run a check to review saved sites. WordPress admin permissions are required for plugin and theme details."
+                />
+              </div>
+            ) : (
+              <div className="mt-4 space-y-3">
+                {wpStatuses.map((item) => (
+                  <div
+                    key={item.site.id}
+                    className="rounded-2xl border border-slate-200 bg-white px-4 py-4"
+                  >
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div>
+                        <p className="text-sm font-semibold text-slate-950">
+                          {item.site.name}
+                        </p>
+                        <p className="mt-1 break-all text-xs text-slate-500">
+                          {item.site.baseUrl}
+                        </p>
+                        <p className="mt-1 text-xs text-slate-500">
+                          Owner: {item.site.owner}
+                        </p>
+                      </div>
+                      <span
+                        className={
+                          item.health.needsAttention > 0 ||
+                          (item.plugins.ok && item.plugins.updateMarkers > 0) ||
+                          (item.themes.ok && item.themes.updateMarkers > 0)
+                            ? "badge-warning"
+                            : "badge-success"
+                        }
+                      >
+                        {item.health.needsAttention > 0 ? "Review" : "OK"}
+                      </span>
+                    </div>
+
+                    <div className="mt-3 grid gap-2 md:grid-cols-3">
+                      <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-3">
+                        <p className="text-[11px] uppercase tracking-[0.14em] text-slate-500">
+                          Plugins
+                        </p>
+                        {item.plugins.ok ? (
+                          <>
+                            <p className="mt-1 text-lg font-semibold text-slate-950">
+                              {item.plugins.active}/{item.plugins.total}
+                            </p>
+                            <p className="text-xs text-slate-500">
+                              Updates: {item.plugins.updateMarkers}
+                            </p>
+                          </>
+                        ) : (
+                          <p className="mt-2 text-xs leading-5 text-red-700">
+                            {item.plugins.error}
+                          </p>
+                        )}
+                      </div>
+                      <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-3">
+                        <p className="text-[11px] uppercase tracking-[0.14em] text-slate-500">
+                          Themes
+                        </p>
+                        {item.themes.ok ? (
+                          <>
+                            <p className="mt-1 text-lg font-semibold text-slate-950">
+                              {item.themes.active}/{item.themes.total}
+                            </p>
+                            <p className="text-xs text-slate-500">
+                              Updates: {item.themes.updateMarkers}
+                            </p>
+                          </>
+                        ) : (
+                          <p className="mt-2 text-xs leading-5 text-red-700">
+                            {item.themes.error}
+                          </p>
+                        )}
+                      </div>
+                      <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-3">
+                        <p className="text-[11px] uppercase tracking-[0.14em] text-slate-500">
+                          Site Health
+                        </p>
+                        <p className="mt-1 text-lg font-semibold text-slate-950">
+                          {item.health.tests.length}
+                        </p>
+                        <p className="text-xs text-slate-500">
+                          Attention: {item.health.needsAttention}
+                        </p>
+                      </div>
+                    </div>
+
+                    {item.plugins.ok && item.plugins.items.length > 0 ? (
+                      <details className="mt-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-3">
+                        <summary className="cursor-pointer text-xs font-semibold text-slate-700">
+                          Plugin list
+                        </summary>
+                        <div className="mt-3 max-h-52 overflow-auto space-y-2">
+                          {item.plugins.items.map((plugin) => (
+                            <div
+                              key={plugin.plugin || plugin.name}
+                              className="flex items-center justify-between gap-3 text-xs"
+                            >
+                              <span className="text-slate-700">
+                                {plugin.name || plugin.plugin}
+                              </span>
+                              <span className="shrink-0 text-slate-500">
+                                {plugin.version || "-"} Â· {plugin.status || "-"}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      </details>
+                    ) : null}
+
+                    {item.themes.ok && item.themes.items.length > 0 ? (
+                      <details className="mt-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-3">
+                        <summary className="cursor-pointer text-xs font-semibold text-slate-700">
+                          Theme list
+                        </summary>
+                        <div className="mt-3 max-h-40 overflow-auto space-y-2">
+                          {item.themes.items.map((theme) => (
+                            <div
+                              key={theme.stylesheet || renderWpText(theme.name)}
+                              className="flex items-center justify-between gap-3 text-xs"
+                            >
+                              <span className="text-slate-700">
+                                {renderWpText(theme.name)}
+                              </span>
+                              <span className="shrink-0 text-slate-500">
+                                {theme.version || "-"} Â· {theme.status || "-"}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      </details>
+                    ) : null}
+
+                    {item.health.tests.length > 0 || item.health.warnings.length > 0 ? (
+                      <details className="mt-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-3">
+                        <summary className="cursor-pointer text-xs font-semibold text-slate-700">
+                          Update health details
+                        </summary>
+                        <div className="mt-3 space-y-2">
+                          {item.health.tests.map((test) => (
+                            <div
+                              key={test.test || test.label}
+                              className="rounded-lg bg-white px-3 py-2 text-xs leading-5 text-slate-600"
+                            >
+                              <span className="font-semibold text-slate-900">
+                                {test.label || test.test || "Site Health test"}
+                              </span>
+                              {" - "}
+                              {test.status || "unknown"}
+                            </div>
+                          ))}
+                          {item.health.warnings.map((warning) => (
+                            <div
+                              key={warning}
+                              className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-900"
+                            >
+                              {warning}
+                            </div>
+                          ))}
+                        </div>
+                      </details>
+                    ) : null}
+                  </div>
+                ))}
+              </div>
+            )}
+          </section>
+
           <section className="panel overflow-hidden">
             <div className="table-toolbar">
               <input className="input md:max-w-xs" value={packageSearch} onChange={(event) => setPackageSearch(event.target.value)} placeholder="Search packages" />

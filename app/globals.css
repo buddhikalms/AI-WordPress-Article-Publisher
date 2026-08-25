@@ -85,11 +85,37 @@
 
 @layer components {
   .panel {
-    @apply rounded-2xl border border-slate-200/80 bg-white/90 shadow-[0_1px_2px_rgba(15,23,42,0.03)] backdrop-blur;
+    @apply rounded-lg border border-slate-200/90 bg-white shadow-[0_8px_28px_rgba(15,23,42,0.055)] ring-1 ring-white/70;
   }
 
   .panel-muted {
-    @apply rounded-2xl border border-slate-200/70 bg-slate-50/80;
+    @apply rounded-lg border border-slate-200/80 bg-slate-50/80 shadow-[inset_0_1px_0_rgba(255,255,255,0.7)];
+  }
+
+  .dashboard-hero {
+    @apply overflow-hidden rounded-lg border border-slate-200 bg-slate-950 px-5 py-5 text-white shadow-[0_18px_46px_rgba(15,23,42,0.18)] md:px-6;
+    background:
+      linear-gradient(135deg, rgba(15, 23, 42, 0.98), rgba(30, 41, 59, 0.96) 48%, rgba(12, 74, 110, 0.92));
+  }
+
+  .metric-card {
+    @apply rounded-lg border border-slate-200 bg-white px-4 py-4 shadow-[0_8px_24px_rgba(15,23,42,0.045)] transition hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-[0_14px_34px_rgba(15,23,42,0.08)];
+  }
+
+  .metric-icon {
+    @apply flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-slate-200 bg-slate-50 text-slate-600;
+  }
+
+  .workflow-card {
+    @apply rounded-lg border bg-white px-4 py-4 text-left transition hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-[0_12px_28px_rgba(15,23,42,0.07)];
+  }
+
+  .workflow-card-active {
+    @apply border-blue-300 bg-blue-50 shadow-[0_12px_30px_rgba(37,99,235,0.12)];
+  }
+
+  .status-row {
+    @apply flex items-center justify-between gap-3 rounded-lg border border-slate-200 bg-white px-3 py-3 shadow-[0_1px_2px_rgba(15,23,42,0.03)];
   }
 
   .page-header {
@@ -101,7 +127,7 @@
   }
 
   .eyebrow {
-    @apply text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500;
+    @apply text-[11px] font-bold uppercase tracking-[0.16em] text-slate-500;
   }
 
   .section-title {
@@ -123,7 +149,7 @@
   .input,
   .textarea,
   .select {
-    @apply w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 transition placeholder:text-slate-400 hover:border-slate-300 focus:border-blue-500 focus:ring-4 focus:ring-blue-100 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-400;
+    @apply w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-[0_1px_2px_rgba(15,23,42,0.03)] transition placeholder:text-slate-400 hover:border-slate-300 focus:border-blue-500 focus:ring-4 focus:ring-blue-100 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-400;
   }
 
   .textarea {
@@ -131,15 +157,15 @@
   }
 
   .button {
-    @apply inline-flex items-center justify-center gap-2 rounded-xl border px-3 py-2 text-sm font-medium transition active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-50;
+    @apply inline-flex items-center justify-center gap-2 rounded-lg border px-3 py-2 text-sm font-semibold transition active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-50;
   }
 
   .button-primary {
-    @apply button border-blue-600 bg-blue-600 text-white hover:border-blue-700 hover:bg-blue-700;
+    @apply button border-blue-600 bg-blue-600 text-white shadow-[0_10px_22px_rgba(37,99,235,0.2)] hover:border-blue-700 hover:bg-blue-700;
   }
 
   .button-secondary {
-    @apply button border-slate-900 bg-slate-900 text-white hover:border-slate-800 hover:bg-slate-800;
+    @apply button border-slate-900 bg-slate-900 text-white shadow-[0_10px_22px_rgba(15,23,42,0.14)] hover:border-slate-800 hover:bg-slate-800;
   }
 
   .button-muted {
@@ -155,7 +181,7 @@
   }
 
   .badge {
-    @apply inline-flex items-center rounded-full border px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.14em];
+    @apply inline-flex items-center rounded-md border px-2 py-0.5 text-[10px] font-bold uppercase tracking-[0.12em];
   }
 
   .badge-neutral {
@@ -179,11 +205,11 @@
   }
 
   .table-shell {
-    @apply overflow-hidden rounded-2xl border border-slate-200/80 bg-white;
+    @apply overflow-hidden rounded-lg border border-slate-200/80 bg-white shadow-[0_8px_24px_rgba(15,23,42,0.045)];
   }
 
   .table-toolbar {
-    @apply flex flex-col gap-3 border-b border-slate-200 px-4 py-3 md:flex-row md:items-center md:justify-between;
+    @apply flex flex-col gap-3 border-b border-slate-200 bg-slate-50/80 px-4 py-3 md:flex-row md:items-center md:justify-between;
   }
 
   .table-scroll {
@@ -195,7 +221,7 @@
   }
 
   .table th {
-    @apply whitespace-nowrap border-b border-slate-200 bg-slate-50 px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500;
+    @apply whitespace-nowrap border-b border-slate-200 bg-slate-50 px-4 py-3 text-left text-[11px] font-bold uppercase tracking-[0.12em] text-slate-500;
   }
 
   .table td {
@@ -211,24 +237,48 @@
   }
 
   .empty-state {
-    @apply flex flex-col items-start gap-2 rounded-2xl border border-dashed border-slate-300 bg-slate-50/70 px-4 py-5 text-sm text-slate-600;
+    @apply flex flex-col items-start gap-2 rounded-lg border border-dashed border-slate-300 bg-slate-50/80 px-4 py-5 text-sm text-slate-600;
   }
 
   .skeleton {
-    @apply animate-pulse rounded-xl bg-slate-200/80;
+    @apply animate-pulse rounded-lg bg-slate-200/80;
   }
 
   .theme-toggle {
-    @apply inline-flex h-11 w-11 items-center justify-center rounded-2xl border border-slate-200 bg-white text-slate-700 transition hover:border-slate-300 hover:bg-slate-50;
+    @apply inline-flex h-10 w-10 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-700 transition hover:border-slate-300 hover:bg-slate-50;
   }
 }
-
 .dark .panel {
   border-color: var(--app-border);
   background: rgba(15, 23, 42, 0.86);
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
 }
 
+.dark .dashboard-hero {
+  border-color: rgba(148, 163, 184, 0.2);
+  background:
+    linear-gradient(135deg, rgba(2, 6, 23, 0.98), rgba(15, 23, 42, 0.96) 48%, rgba(8, 47, 73, 0.9));
+  box-shadow: 0 18px 46px rgba(0, 0, 0, 0.42);
+}
+
+.dark .metric-card,
+.dark .workflow-card,
+.dark .status-row {
+  border-color: var(--app-border);
+  background-color: rgba(15, 23, 42, 0.86);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.22);
+}
+
+.dark .workflow-card-active {
+  border-color: rgba(96, 165, 250, 0.38);
+  background-color: rgba(30, 64, 175, 0.28);
+}
+
+.dark .metric-icon {
+  border-color: var(--app-border);
+  background-color: rgba(30, 41, 59, 0.72);
+  color: #bfdbfe;
+}
 .dark .panel-muted,
 .dark .page-header {
   border-color: var(--app-border);

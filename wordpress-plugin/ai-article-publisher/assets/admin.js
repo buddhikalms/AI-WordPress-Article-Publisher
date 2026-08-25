@@ -5,6 +5,7 @@
 
   const config = window.AIAArticlePublisher;
   const state = { busy: false };
+  const maxEditorImageBytes = 2 * 1024 * 1024;
   const $ = (selector) => document.querySelector(selector);
   const $$ = (selector) => Array.from(document.querySelectorAll(selector));
 
@@ -120,15 +121,54 @@
   };
 
   const getValue = (selector) => {
+    if (selector === "#aia-manual-html" && window.tinymce) {
+      const editor = window.tinymce.get("aia-manual-html");
+      if (editor && !editor.isHidden()) {
+        return editor.getContent();
+      }
+    }
     const element = $(selector);
     return element ? element.value : "";
   };
 
   const setValue = (selector, value) => {
+    if (selector === "#aia-manual-html" && window.tinymce) {
+      const editor = window.tinymce.get("aia-manual-html");
+      if (editor) {
+        editor.setContent(value ?? "");
+      }
+    }
     const element = $(selector);
     if (element) {
       element.value = value ?? "";
     }
+  };
+
+  const slugify = (value) =>
+    String(value || "")
+      .toLowerCase()
+      .trim()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 120);
+
+  const appendHtmlToManualEditor = (htmlToAppend) => {
+    const currentHtml = getValue("#aia-manual-html").trim();
+    const nextHtml = `${currentHtml}\n${htmlToAppend}`.trim();
+    setValue("#aia-manual-html", nextHtml);
+    setPreviewHtml(nextHtml);
+  };
+
+  const buildImageFigure = (src, altText) =>
+    `<figure class="wp-block-image size-large"><img src="${escapeHtml(
+      src
+    )}" alt="${escapeHtml(altText || "")}" loading="lazy" decoding="async" /></figure>`;
+
+  const insertEditorImage = (src, altText) => {
+    if (!src) {
+      throw new Error("Add an image URL or upload an image first.");
+    }
+    appendHtmlToManualEditor(buildImageFigure(src, altText));
   };
 
   const localDateTimeToIso = (value) => {
@@ -363,6 +403,96 @@
     updateCategoryCount();
   };
 
+  const bindSlugField = () => {
+    const titleField = $("#aia-manual-title");
+    const slugField = $("#aia-manual-slug");
+    if (!titleField || !slugField) return;
+    let slugEdited = false;
+    titleField.addEventListener("input", () => {
+      if (!slugEdited) {
+        slugField.value = slugify(titleField.value);
+      }
+    });
+    slugField.addEventListener("input", () => {
+      slugEdited = true;
+      slugField.value = slugify(slugField.value);
+    });
+  };
+
+  const bindEditorImages = () => {
+    $("#aia-insert-editor-image-url")?.addEventListener("click", () => {
+      try {
+        insertEditorImage(
+          getValue("#aia-editor-image-url").trim(),
+          getValue("#aia-editor-image-alt").trim()
+        );
+        setValue("#aia-editor-image-url", "");
+        setValue("#aia-editor-image-alt", "");
+        showStatus("success", "Image inserted into the article editor.");
+      } catch (error) {
+        showStatus("error", error.message || "Failed to insert image.");
+      }
+    });
+
+    $("#aia-editor-image-file")?.addEventListener("change", (event) => {
+      const file = event.target.files?.[0];
+      event.target.value = "";
+      if (!file) return;
+      if (!file.type.startsWith("image/")) {
+        showStatus("error", "Choose an image file.");
+        return;
+      }
+      if (file.size > maxEditorImageBytes) {
+        showStatus("error", "Choose an image under 2 MB for manual editor uploads.");
+        return;
+      }
+      const reader = new FileReader();
+      reader.onload = () => {
+        try {
+          insertEditorImage(
+            String(reader.result || ""),
+            getValue("#aia-editor-image-alt").trim() || file.name.replace(/\.[^.]+$/, "")
+          );
+          setValue("#aia-editor-image-alt", "");
+          showStatus("success", "Image added. It will be uploaded to WordPress media during publish.");
+        } catch (error) {
+          showStatus("error", error.message || "Failed to insert image.");
+        }
+      };
+      reader.onerror = () => showStatus("error", "Could not read image file.");
+      reader.readAsDataURL(file);
+    });
+
+    $("#aia-insert-generated-image")?.addEventListener("click", () => {
+      const imageBase64 = getValue("#aia-manual-image-base64");
+      const mimeType = getValue("#aia-manual-image-mime");
+      if (!imageBase64 || !mimeType) {
+        showStatus("error", "Generate an image first.");
+        return;
+      }
+      insertEditorImage(
+        `data:${mimeType};base64,${imageBase64}`,
+        getValue("#aia-editor-image-alt").trim() || getValue("#aia-manual-title").trim()
+      );
+      setValue("#aia-editor-image-alt", "");
+      showStatus("success", "Generated image inserted into the article body.");
+    });
+  };
+
+  const bindClassicEditorPreview = () => {
+    const bindTinyMce = () => {
+      if (!window.tinymce) return;
+      const editor = window.tinymce.get("aia-manual-html");
+      if (!editor || editor.aiaPreviewBound) return;
+      editor.aiaPreviewBound = true;
+      editor.on("change keyup input undo redo", () => {
+        setPreviewHtml(editor.getContent());
+      });
+    };
+    bindTinyMce();
+    window.setTimeout(bindTinyMce, 500);
+  };
+
   const bindManualActions = () => {
     $("#aia-generate-draft")?.addEventListener("click", (event) =>
       withBusy(async () => {
@@ -417,6 +547,7 @@
         const data = await request("aia_publish_post", {
           ...collectSharedPayload(),
           title: getValue("#aia-manual-title").trim(),
+          slug: slugify(getValue("#aia-manual-slug") || getValue("#aia-manual-title")),
           brief: getValue("#aia-manual-brief").trim(),
           html: getValue("#aia-manual-html"),
           excerpt: getValue("#aia-manual-excerpt").trim(),
@@ -663,6 +794,8 @@
     bindTabs();
     bindScheduleFields();
     bindSharedHelpers();
+    bindSlugField();
+    bindEditorImages();
     bindManualActions();
     bindClaudeActions();
     bindQualityTools();
@@ -672,6 +805,7 @@
     $("#aia-manual-html")?.addEventListener("input", (event) =>
       setPreviewHtml(event.target.value)
     );
+    bindClassicEditorPreview();
     $("#aia-add-link")?.addEventListener("click", () => createLinkRow());
 
     if (!linksListEl?.children.length) {

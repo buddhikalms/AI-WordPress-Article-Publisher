@@ -201,6 +201,7 @@ export default function BillingPage() {
           { href: "/app/dashboard", label: "Workspace", hint: "Generate and publish content", group: "Workspace", icon: "workspace" },
           { href: "/billing", label: "Billing", hint: "Packages and purchases", group: "Revenue", icon: "billing" },
           { href: "/account", label: "Sites", hint: "Connected WordPress sites", group: "Settings", icon: "sites" },
+          { href: "/account#ai-keys", label: "AI Keys", hint: "OpenAI and Gemini credentials", group: "Settings", icon: "settings" },
           { href: "/admin", label: "Admin", hint: "Users and package management", visible: role === "ADMIN", group: "Operations", icon: "admin" },
         ] satisfies DashboardNavItem[]
       }

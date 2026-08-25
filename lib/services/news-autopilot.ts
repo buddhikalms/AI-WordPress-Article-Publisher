@@ -2,6 +2,7 @@ import { TokenReason } from "@prisma/client";
 import { HttpError } from "@/lib/errors";
 import { generateFeaturedImage, generateInlineArticleImages } from "@/lib/openai";
 import { rewriteNewsAsOriginalArticle } from "@/lib/ai";
+import { resolveAiProviderCredential } from "@/lib/ai-credentials";
 import { getUserWordPressConfig } from "@/lib/user-wordpress";
 import { fetchNewsByCategory } from "@/lib/newsdata";
 import { applySeoUpdate } from "@/lib/wp-seo";
@@ -157,13 +158,19 @@ export const runNewsAutopilot = async (params: {
   for (let index = 0; index < sourceArticles.length; index += 1) {
     const source = sourceArticles[index];
     try {
+      const credential = await resolveAiProviderCredential({
+        userId: params.userId,
+        provider: payload.provider || "openai",
+        requestedModel: payload.model,
+      });
       const generated = await rewriteNewsAsOriginalArticle({
         article: source,
         category: payload.category,
         tone: payload.tone,
         wordCount: payload.wordCount,
         provider: payload.provider,
-        model: payload.model,
+        model: credential.model || payload.model,
+        apiKey: credential.apiKey,
       });
       const tagIds = new Set<number>(baseTagIds);
       for (const name of generated.meta.suggestedTags) {

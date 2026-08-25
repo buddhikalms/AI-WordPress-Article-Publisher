@@ -58,7 +58,7 @@ The products share the same publishing goal, but they are not required to run to
 | Multiple WordPress sites per user | Yes | No; operates on the installed site |
 | Token metering | Yes | No |
 | Stripe package purchases | Yes | No |
-| Manual article generation | OpenAI | OpenAI or Claude API; manual Claude bridge also available |
+| Manual article generation | OpenAI, Gemini, or Ollama | OpenAI, Gemini, or Claude API; manual Claude bridge also available |
 | Image generation | OpenAI | OpenAI |
 | Google Doc import | Yes | Yes |
 | NewsData autopublishing | Yes | Yes |
@@ -70,7 +70,7 @@ The products share the same publishing goal, but they are not required to run to
 
 ### 4.1 SaaS Architecture
 
-The SaaS application uses Next.js App Router for pages and server-side API routes. React and Tailwind CSS provide the user interface. NextAuth manages credentials and Google authentication. Prisma connects to MySQL or MariaDB. OpenAI supplies text and image generation, NewsData supplies source news, Stripe handles checkout, and Nodemailer sends verification email.
+The SaaS application uses Next.js App Router for pages and server-side API routes. React and Tailwind CSS provide the user interface. NextAuth manages credentials and Google authentication. Prisma connects to MySQL or MariaDB. OpenAI, Gemini, or Ollama can supply text generation, OpenAI supplies image generation, NewsData supplies source news, Stripe handles checkout, and Nodemailer sends verification email.
 
 Remote publishing uses the WordPress REST API with a WordPress username and Application Password. Each user's site credentials are stored in the application database, and the Application Password is encrypted with `APP_ENCRYPTION_KEY`.
 
@@ -323,12 +323,15 @@ NEXTAUTH_SECRET
 NEXTAUTH_URL
 NEXT_PUBLIC_APP_URL
 OPENAI_API_KEY
+GEMINI_API_KEY
 ```
 
 Feature variables:
 
 ```text
 OPENAI_TEXT_MODEL
+GEMINI_TEXT_MODEL
+GEMINI_TIMEOUT_MS
 NEWSDATA_API_KEY
 NEWSDATA_BASE_URL
 GOOGLE_CLIENT_ID
@@ -377,7 +380,7 @@ The `lint` script uses `next lint`, which belongs to the Next.js 14 toolchain an
 - PHP 7.4 or later.
 - WordPress administrator access for installation and settings.
 - Outbound HTTPS access from WordPress to the selected AI and news providers.
-- OpenAI, Claude, and/or NewsData credentials according to the workflows used.
+- OpenAI, Gemini, Claude, and/or NewsData credentials according to the workflows used.
 
 Source directory:
 
@@ -411,15 +414,16 @@ Alternatively, copy the plugin folder to `wp-content/plugins/ai-article-publishe
 
 ### 9.4 Provider Configuration
 
-The plugin supports three text-generation modes:
+The plugin supports four text-generation modes:
 
 - `OpenAI`: automated generation through the OpenAI API.
+- `Gemini`: automated generation through the Gemini API.
 - `Claude API`: automated generation through the Anthropic Messages API.
 - `Claude Desktop Manual`: WordPress creates a prompt; the user runs it manually in Claude Desktop and pastes the returned JSON into WordPress for validation and publication.
 
-Credential settings include default provider, OpenAI API key, OpenAI text model, OpenAI image model, Claude API key, Claude model, provider fallback order, temperature from 0 to 2, maximum tokens from 512 to 20,000, NewsData API key, and default tone.
+Credential settings include default provider, OpenAI API key, OpenAI text model, OpenAI image model, Gemini API key, Gemini model, Claude API key, Claude model, provider fallback order, temperature from 0 to 2, maximum tokens from 512 to 20,000, NewsData API key, and default tone.
 
-The provider fallback order can contain automated providers such as `openai,claude_api`. Manual Claude mode is deliberately a copy-and-paste bridge and does not automate the Claude Desktop application. Image generation remains an OpenAI operation even when Claude generates article text.
+The provider fallback order can contain automated providers such as `openai,gemini,claude_api`. Manual Claude mode is deliberately a copy-and-paste bridge and does not automate the Claude Desktop application. Image generation remains an OpenAI operation even when Gemini or Claude generates article text.
 
 ### 9.5 Shared Post Setup
 

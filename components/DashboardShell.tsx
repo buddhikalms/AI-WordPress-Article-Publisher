@@ -225,7 +225,7 @@ export default function DashboardShell({
 
   const sidebarContent = (
     <>
-      <div className="rounded-2xl border border-slate-800 bg-slate-950 px-4 py-4 text-white">
+      <div className="overflow-hidden rounded-lg border border-slate-800 bg-slate-950 px-4 py-4 text-white shadow-[0_18px_40px_rgba(15,23,42,0.2)]">
         <div className="flex items-center justify-between gap-3">
           <div>
             <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-400">
@@ -274,7 +274,7 @@ export default function DashboardShell({
                     }`}
                   >
                     <span
-                      className={`mt-0.5 rounded-xl border p-2 ${
+                      className={`mt-0.5 rounded-lg border p-2 ${
                         active
                           ? "border-blue-200 bg-white text-blue-700"
                           : "border-slate-200 bg-slate-50 text-slate-500"
@@ -307,7 +307,7 @@ export default function DashboardShell({
   return (
     <div className="min-h-screen px-3 py-3 md:px-4 md:py-4">
       <div className="mx-auto flex w-full max-w-[1600px] gap-4">
-        <aside className="sticky top-4 hidden h-[calc(100vh-2rem)] w-72 shrink-0 rounded-[28px] border border-slate-200/80 bg-white/75 p-4 shadow-[0_8px_30px_rgba(15,23,42,0.06)] backdrop-blur xl:block">
+        <aside className="sticky top-4 hidden h-[calc(100vh-2rem)] w-72 shrink-0 rounded-lg border border-slate-200/90 bg-white/85 p-4 shadow-[0_18px_48px_rgba(15,23,42,0.08)] backdrop-blur xl:block">
           {sidebarContent}
         </aside>
 
@@ -329,7 +329,7 @@ export default function DashboardShell({
         </aside>
 
         <div className="min-w-0 flex-1 space-y-4">
-          <header className="panel flex flex-col gap-4 px-4 py-3 md:px-5">
+          <header className="panel sticky top-3 z-20 flex flex-col gap-4 px-4 py-3 md:px-5">
             <div className="flex flex-wrap items-center gap-3">
               <button
                 type="button"
@@ -369,7 +369,7 @@ export default function DashboardShell({
                           <Link
                             key={item.href}
                             href={item.href}
-                            className="block rounded-xl px-3 py-2 hover:bg-slate-50"
+                            className="block rounded-lg px-3 py-2 hover:bg-slate-50"
                             onClick={() => setSearchQuery("")}
                           >
                             <p className="text-sm font-medium text-slate-900">{item.label}</p>
@@ -384,7 +384,7 @@ export default function DashboardShell({
                 ) : null}
               </div>
 
-              <div className="hidden items-center gap-2 rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 sm:flex">
+              <div className="hidden items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 sm:flex">
                 <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">
                   Balance
                 </span>
@@ -398,10 +398,10 @@ export default function DashboardShell({
               <div className="relative ml-auto" ref={userMenuRef}>
                 <button
                   type="button"
-                  className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-white px-3 py-2 text-left hover:bg-slate-50"
+                  className="flex items-center gap-3 rounded-lg border border-slate-200 bg-white px-3 py-2 text-left transition hover:border-slate-300 hover:bg-slate-50"
                   onClick={() => setIsUserMenuOpen((current) => !current)}
                 >
-                  <span className="flex h-9 w-9 items-center justify-center rounded-2xl bg-slate-900 text-xs font-semibold text-white">
+                  <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-slate-900 text-xs font-semibold text-white">
                     {initialsFrom(userLabel || userEmail || role)}
                   </span>
                   <span className="hidden sm:block">
@@ -411,8 +411,8 @@ export default function DashboardShell({
                 </button>
 
                 {isUserMenuOpen ? (
-                  <div className="absolute right-0 top-[calc(100%+0.5rem)] z-20 w-64 rounded-2xl border border-slate-200 bg-white p-2 shadow-xl">
-                    <div className="rounded-2xl bg-slate-50 px-3 py-3">
+                  <div className="absolute right-0 top-[calc(100%+0.5rem)] z-20 w-64 rounded-lg border border-slate-200 bg-white p-2 shadow-xl">
+                    <div className="rounded-lg bg-slate-50 px-3 py-3">
                       <p className="text-sm font-medium text-slate-950">{userLabel}</p>
                       <p className="mt-1 text-xs text-slate-500">{userEmail || "No email available"}</p>
                     </div>
@@ -421,7 +421,7 @@ export default function DashboardShell({
                         <Link
                           key={item.href}
                           href={item.href}
-                          className="block rounded-xl px-3 py-2 text-sm text-slate-700 hover:bg-slate-50"
+                          className="block rounded-lg px-3 py-2 text-sm text-slate-700 hover:bg-slate-50"
                           onClick={() => setIsUserMenuOpen(false)}
                         >
                           {item.label}
@@ -441,17 +441,17 @@ export default function DashboardShell({
             </div>
           </header>
 
-          <div className="page-header">
+          <div className="dashboard-hero">
             <div className="section-header">
               <div className="min-w-0">
-                <p className="eyebrow">{role === "ADMIN" ? "Operations" : "Dashboard"}</p>
-                <h1 className="mt-1 text-lg font-semibold text-slate-950">{title}</h1>
-                <p className="mt-1 max-w-3xl text-sm text-slate-500">{subtitle}</p>
+                <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-blue-200">{role === "ADMIN" ? "Operations" : "Dashboard"}</p>
+                <h1 className="mt-2 text-2xl font-semibold tracking-tight text-white md:text-3xl">{title}</h1>
+                <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-300">{subtitle}</p>
               </div>
               <div className="flex flex-wrap items-center gap-2">
-                <span className="badge-neutral">{role}</span>
+                <span className="badge border-white/15 bg-white/10 text-white">{role}</span>
                 {typeof tokenBalance === "number" ? (
-                  <span className="badge-info">{tokenBalance.toLocaleString()} tokens</span>
+                  <span className="badge border-blue-300/30 bg-blue-300/15 text-blue-100">{tokenBalance.toLocaleString()} tokens</span>
                 ) : null}
               </div>
             </div>

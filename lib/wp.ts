@@ -38,6 +38,40 @@ export interface WpTag {
   count?: number;
 }
 
+export interface WpPluginStatus {
+  plugin?: string;
+  status?: string;
+  name?: string;
+  version?: string;
+  author?: string;
+  requires_wp?: string;
+  requires_php?: string;
+  update?: unknown;
+}
+
+export interface WpThemeStatus {
+  stylesheet?: string;
+  status?: string;
+  name?: string | { raw?: string; rendered?: string };
+  version?: string;
+  author?: string | { raw?: string; rendered?: string };
+  requires_wp?: string;
+  requires_php?: string;
+  update?: unknown;
+}
+
+export interface WpSiteHealthTest {
+  status?: string;
+  label?: string;
+  description?: string;
+  badge?: {
+    label?: string;
+    color?: string;
+  };
+  actions?: string;
+  test?: string;
+}
+
 const normalizeWpBaseUrl = (value: string) => {
   const trimmed = value.trim().replace(/\/+$/, "");
 
@@ -583,6 +617,27 @@ export const getCurrentUser = async (config?: WpConfig) => {
   return wpRequest<Record<string, unknown>>("/wp-json/wp/v2/users/me", {
     method: "GET",
   }, config);
+};
+
+export const listPlugins = async (config?: WpConfig) => {
+  const query =
+    "/wp-json/wp/v2/plugins?context=edit&per_page=100&_fields=plugin,status,name,version,author,requires_wp,requires_php,update";
+  return wpRequest<WpPluginStatus[]>(query, { method: "GET" }, config);
+};
+
+export const listThemes = async (config?: WpConfig) => {
+  const query =
+    "/wp-json/wp/v2/themes?context=edit&per_page=100&_fields=stylesheet,status,name,version,author,requires_wp,requires_php,update";
+  return wpRequest<WpThemeStatus[]>(query, { method: "GET" }, config);
+};
+
+export const getSiteHealthTest = async (test: string, config?: WpConfig) => {
+  const safeTest = encodeURIComponent(test.trim());
+  return wpRequest<WpSiteHealthTest>(
+    `/wp-json/wp-site-health/v1/tests/${safeTest}`,
+    { method: "GET" },
+    config,
+  );
 };
 
 export const getSeoDiagnosticPosts = async (config?: WpConfig) => {

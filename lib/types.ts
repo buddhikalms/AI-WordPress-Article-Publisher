@@ -53,7 +53,9 @@ export interface GenerateArticleResponse {
 export interface PublishRequest {
   siteId?: string;
   title: string;
+  slug?: string;
   html: string;
+  links?: HyperlinkInput[];
   brief?: string;
   excerpt: string;
   status: PublishStatus;

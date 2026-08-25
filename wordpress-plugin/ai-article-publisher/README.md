@@ -2,12 +2,12 @@
 
 Standalone WordPress plugin version of the workflows in this repo:
 
-- Manual article generation with OpenAI
+- Manual article generation with OpenAI, Gemini, or Claude API
 - Featured image generation
 - Publish now, save draft, or schedule
 - Optional in-post image generation
 - Google Doc import with lightweight front matter support, direct document HTML preservation, embedded image upload, and document-provided SEO metadata
-- NewsData category autopilot with OpenAI rewrites
+- NewsData category autopilot with OpenAI, Gemini, or Claude API rewrites
 - Yoast and AIOSEO post meta updates with character-limited metadata for Google Doc imports
 
 ## Structure
@@ -24,14 +24,14 @@ Standalone WordPress plugin version of the workflows in this repo:
 1. Copy `wordpress-plugin/ai-article-publisher` to `wp-content/plugins/ai-article-publisher`
 2. Activate **AI Article Publisher** in WordPress
 3. Open **AI Publisher** in the WP admin menu
-4. Open **Credentials** and save your `OpenAI API Key`
+4. Open **Credentials** and save your preferred provider key, such as `OpenAI API Key` or `Gemini API Key`
 5. Save your `NewsData API Key` there if you want News Autopilot
 6. Return to **Studio** to generate or import posts
 
 ## Admin Pages
 
 - `Studio`: shared publish settings plus Manual Studio, Google Doc Import, and News Autopilot
-- `Credentials`: OpenAI and NewsData API keys, model choice, and default tone
+- `Credentials`: OpenAI, Gemini, Claude, and NewsData API keys, model choice, provider fallback order, and default tone
 - `Documentation`: quick-start help, workflow guidance, front matter example, and troubleshooting
 
 ## Notes

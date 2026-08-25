@@ -4,6 +4,17 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { signOut, useSession } from "next-auth/react";
+import {
+  Code2,
+  Copy,
+  ExternalLink,
+  Eye,
+  ImageIcon,
+  MessageSquare,
+  PlugZap,
+  Save,
+  Wand2,
+} from "lucide-react";
 import ArticlePreview from "@/components/ArticlePreview";
 import DashboardLoadError from "@/components/DashboardLoadError";
 import DashboardLoading from "@/components/DashboardLoading";
@@ -12,6 +23,7 @@ import EmptyState from "@/components/EmptyState";
 import LinkTable from "@/components/LinkTable";
 import SeoFields from "@/components/SeoFields";
 import StatusToast from "@/components/StatusToast";
+import TiptapArticleEditor from "@/components/TiptapArticleEditor";
 import { slugifyArticle } from "@/lib/slug";
 import type {
   HyperlinkInput,
@@ -21,9 +33,11 @@ import type {
 } from "@/lib/types";
 
 type ToastState = { type: "success" | "error" | "info"; message: string };
-type AiProvider = "openai" | "ollama";
+type AiProvider = "openai" | "gemini" | "ollama";
+type AiModelOption = { value: string; label: string };
 type PublishMode = "draft" | "publish" | "future";
 type WorkspaceMode = "manual" | "google-doc" | "news";
+type DraftViewMode = "preview" | "edit" | "html";
 type CategoryOption = { id: number; name: string; slug: string; count?: number };
 type TagOption = { id: number; name: string; slug: string; count?: number };
 type GeneratedImageState = {
@@ -90,6 +104,44 @@ const newsCategoryOptions = [
   "world",
 ] as const;
 
+const aiProviderOptions: { value: AiProvider; label: string }[] = [
+  { value: "openai", label: "OpenAI" },
+  { value: "gemini", label: "Gemini" },
+  { value: "ollama", label: "Ollama (self-hosted)" },
+];
+
+const aiModelOptions: Record<AiProvider, AiModelOption[]> = {
+  openai: [
+    { value: "gpt-4.1-mini", label: "GPT-4.1 mini" },
+    { value: "gpt-4.1", label: "GPT-4.1" },
+    { value: "gpt-4o-mini", label: "GPT-4o mini" },
+  ],
+  gemini: [
+    { value: "gemini-3.5-flash", label: "Gemini 3.5 Flash" },
+    { value: "gemini-3.7-flash", label: "Gemini 3.7 Flash" },
+    { value: "gemini-3.6-flash", label: "Gemini 3.6 Flash" },
+    { value: "gemini-3.5-flash-lite", label: "Gemini 3.5 Flash-Lite" },
+    { value: "gemini-3.1-flash-lite", label: "Gemini 3.1 Flash-Lite" },
+    { value: "gemini-2.5-pro", label: "Gemini 2.5 Pro" },
+    { value: "gemini-2.5-flash", label: "Gemini 2.5 Flash" },
+    { value: "gemini-1.5-flash", label: "Gemini 1.5 Flash" },
+  ],
+  ollama: [
+    { value: "llama3.1", label: "Llama 3.1" },
+    { value: "llama3.2", label: "Llama 3.2" },
+    { value: "mistral", label: "Mistral" },
+    { value: "gemma2", label: "Gemma 2" },
+  ],
+};
+
+const getAiProviderLabel = (provider: AiProvider) => {
+  if (provider === "gemini") return "Gemini";
+  if (provider === "ollama") return "Ollama";
+  return "OpenAI";
+};
+
+const getDefaultAiModel = (provider: AiProvider) => aiModelOptions[provider][0]?.value || "";
+
 const initialSeoPayload: SeoPayload = {
   seoTitle: "",
   metaDescription: "",
@@ -105,6 +157,8 @@ const initialLink: HyperlinkInput = {
   required: false,
   followType: "dofollow",
 };
+
+const maxEditorImageBytes = 2 * 1024 * 1024;
 
 const workspaceTabs = [
   ["manual", "Manual Studio", "Generate, refine, and publish from a structured brief."],
@@ -162,16 +216,19 @@ function MetricCard({
   badge?: string;
 }) {
   return (
-    <div className="panel-muted px-4 py-4">
+    <div className="metric-card">
       <div className="flex items-start justify-between gap-3">
-        <div>
-          <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">
+        <div className="min-w-0">
+          <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-500">
             {label}
           </p>
-          <p className="mt-2 text-xl font-semibold text-slate-950">{value}</p>
-          <p className="mt-1 text-xs leading-5 text-slate-500">{hint}</p>
+          <p className="mt-2 truncate text-2xl font-semibold text-slate-950">{value}</p>
+          <p className="mt-1 line-clamp-2 text-xs leading-5 text-slate-500">{hint}</p>
         </div>
-        {badge ? <span className="badge-neutral">{badge}</span> : null}
+        {badge ? <span className="badge-info shrink-0">{badge}</span> : null}
+      </div>
+      <div className="mt-4 h-1 rounded-full bg-slate-100">
+        <div className="h-1 w-2/3 rounded-full bg-blue-600" />
       </div>
     </div>
   );
@@ -223,6 +280,9 @@ export default function DashboardPage() {
   const { data: session, status } = useSession();
 
   const [workspaceMode, setWorkspaceMode] = useState<WorkspaceMode>("manual");
+  const [publicAppUrl, setPublicAppUrl] = useState(
+    process.env.NEXT_PUBLIC_APP_URL || "",
+  );
   const [account, setAccount] = useState<AccountSummaryState | null>(null);
   const [accountLoadError, setAccountLoadError] = useState<string | null>(null);
   const [selectedSiteId, setSelectedSiteId] = useState("");
@@ -237,6 +297,8 @@ export default function DashboardPage() {
   const [seoPayload, setSeoPayload] = useState<SeoPayload>(initialSeoPayload);
   const [toast, setToast] = useState<ToastState | null>(null);
   const [title, setTitle] = useState("");
+  const [customSlug, setCustomSlug] = useState("");
+  const [isSlugEdited, setIsSlugEdited] = useState(false);
   const [brief, setBrief] = useState("");
   const [keywords, setKeywords] = useState("");
   const [tone, setTone] = useState("Professional");
@@ -244,11 +306,15 @@ export default function DashboardPage() {
   const [links, setLinks] = useState<HyperlinkInput[]>([initialLink]);
   const [inPostImageCount, setInPostImageCount] = useState(0);
   const [aiProvider, setAiProvider] = useState<AiProvider>("openai");
-  const [aiModel, setAiModel] = useState("");
+  const [aiModel, setAiModel] = useState(getDefaultAiModel("openai"));
   const [skipManualImages, setSkipManualImages] = useState(false);
   const [newsSkipImages, setNewsSkipImages] = useState(false);
   const [googleDocSkipImages, setGoogleDocSkipImages] = useState(false);
   const [generatedHtml, setGeneratedHtml] = useState("");
+  const [draftViewMode, setDraftViewMode] = useState<DraftViewMode>("preview");
+  const [editPrompt, setEditPrompt] = useState("");
+  const [insertImageUrl, setInsertImageUrl] = useState("");
+  const [insertImageAlt, setInsertImageAlt] = useState("");
   const [excerpt, setExcerpt] = useState("");
   const [suggestedTags, setSuggestedTags] = useState<string[]>([]);
   const [generatedImage, setGeneratedImage] = useState<GeneratedImageState | null>(null);
@@ -270,6 +336,7 @@ export default function DashboardPage() {
   const [newsAutoPublishResult, setNewsAutoPublishResult] =
     useState<NewsAutoPublishResultState | null>(null);
   const [isGeneratingDraft, setIsGeneratingDraft] = useState(false);
+  const [isEditingDraft, setIsEditingDraft] = useState(false);
   const [isGeneratingImage, setIsGeneratingImage] = useState(false);
   const [isPublishing, setIsPublishing] = useState(false);
   const [isPublishingGoogleDoc, setIsPublishingGoogleDoc] = useState(false);
@@ -285,15 +352,21 @@ export default function DashboardPage() {
   );
   const hasSiteConfigured = (account?.wordpressSites.length || 0) > 0;
   const isBusy =
-    isGeneratingDraft || isGeneratingImage || isPublishing || isPublishingGoogleDoc || isAutoPublishingNews;
+    isGeneratingDraft ||
+    isEditingDraft ||
+    isGeneratingImage ||
+    isPublishing ||
+    isPublishingGoogleDoc ||
+    isAutoPublishingNews;
   const keywordsCount = parseKeywords(keywords).length;
-  const currentSlug = slugifyArticle(title);
+  const currentSlug = customSlug.trim() || slugifyArticle(title);
   const selectedCategoryNames = categories
     .filter((category) => selectedCategoryIds.includes(category.id))
     .map((category) => category.name);
   const selectedTagNames = tags
     .filter((tag) => selectedTagIds.includes(tag.id))
     .map((tag) => tag.name);
+  const availableAiModels = aiModelOptions[aiProvider];
 
   const stats = useMemo(
     () => [
@@ -422,6 +495,22 @@ export default function DashboardPage() {
   };
 
   useEffect(() => {
+    setPublicAppUrl(window.location.origin);
+  }, []);
+
+  useEffect(() => {
+    if (!isSlugEdited) {
+      setCustomSlug(slugifyArticle(title));
+    }
+  }, [isSlugEdited, title]);
+
+  useEffect(() => {
+    if (!availableAiModels.some((model) => model.value === aiModel)) {
+      setAiModel(getDefaultAiModel(aiProvider));
+    }
+  }, [aiModel, aiProvider, availableAiModels]);
+
+  useEffect(() => {
     if (status === "unauthenticated") {
       router.replace("/login");
       return;
@@ -459,6 +548,11 @@ export default function DashboardPage() {
     setAccount((current) => (current ? { ...current, tokenBalance: remaining } : current));
   };
 
+  const handleAiProviderChange = (provider: AiProvider) => {
+    setAiProvider(provider);
+    setAiModel(getDefaultAiModel(provider));
+  };
+
   const toggleDestination = (siteId: string) => {
     if (selectedSiteIds.includes(siteId)) {
       const next = selectedSiteIds.filter((id) => id !== siteId);
@@ -469,6 +563,179 @@ export default function DashboardPage() {
 
     setSelectedSiteIds([...selectedSiteIds, siteId]);
     if (!selectedSiteId) setSelectedSiteId(siteId);
+  };
+
+  const getPublicAppUrl = () => {
+    return publicAppUrl || process.env.NEXT_PUBLIC_APP_URL || "";
+  };
+
+  const getMcpConnectorUrl = () => `${getPublicAppUrl().replace(/\/+$/, "")}/api/mcp`;
+
+  const copyText = async (value: string, successMessage: string) => {
+    try {
+      await navigator.clipboard.writeText(value);
+      setToast({ type: "success", message: successMessage });
+    } catch {
+      setToast({
+        type: "error",
+        message: "Could not copy to clipboard. Select and copy the text manually.",
+      });
+    }
+  };
+
+  const openChatGpt = () => {
+    window.open("https://chatgpt.com/", "_blank", "noopener,noreferrer");
+  };
+
+  const handleConnectChatGpt = async () => {
+    await copyText(
+      getMcpConnectorUrl(),
+      "MCP connector URL copied. Paste it into ChatGPT custom connector settings.",
+    );
+    openChatGpt();
+  };
+
+  const buildChatGptCommand = () => {
+    const destinations = selectedSites.length
+      ? selectedSites.map((site) => site.name).join(", ")
+      : "my connected WordPress site";
+    const safeHtml = generatedHtml.trim()
+      ? generatedHtml.trim().slice(0, 12000)
+      : "";
+
+    return [
+      "Use my AI Article Publisher MCP connector.",
+      "",
+      `Target site(s): ${destinations}`,
+      `Title: ${title.trim() || "Untitled article"}`,
+      `Focus keyword: ${seoPayload.focusKeyword.trim() || "Choose the best focus keyword"}`,
+      `Tone: ${tone}`,
+      `Target word count: ${wordCount}`,
+      "",
+      editPrompt.trim()
+        ? `Edit instructions: ${editPrompt.trim()}`
+        : "Task: review this article idea, improve it, and create a WordPress draft. Do not publish unless I explicitly ask.",
+      "",
+      brief.trim() ? `Brief:\n${brief.trim()}` : "",
+      keywords.trim() ? `Keywords:\n${keywords.trim()}` : "",
+      safeHtml
+        ? `Current article HTML:\n${safeHtml}${generatedHtml.length > safeHtml.length ? "\n\n[HTML truncated for ChatGPT prompt. Ask me if you need the full article.]" : ""}`
+        : "",
+      "",
+      "After editing, keep the result as a draft unless I explicitly say to publish.",
+    ]
+      .filter(Boolean)
+      .join("\n");
+  };
+
+  const escapeHtmlAttribute = (value: string) =>
+    value
+      .replace(/&/g, "&amp;")
+      .replace(/"/g, "&quot;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;");
+
+  const appendHtmlToDraft = (htmlToAppend: string) => {
+    const nextHtml = `${generatedHtml.trim()}\n${htmlToAppend}`.trim();
+    setGeneratedHtml(nextHtml);
+    setDraftViewMode("edit");
+  };
+
+  const insertImageIntoDraft = (src: string, altText: string) => {
+    if (!src.trim()) {
+      throw new Error("Add an image URL or upload an image first.");
+    }
+    appendHtmlToDraft(
+      `<figure class="wp-block-image size-large"><img src="${escapeHtmlAttribute(
+        src.trim(),
+      )}" alt="${escapeHtmlAttribute(
+        altText.trim(),
+      )}" loading="lazy" decoding="async" /></figure>`,
+    );
+  };
+
+  const handleInsertImageUrl = () => {
+    try {
+      insertImageIntoDraft(insertImageUrl, insertImageAlt);
+      setInsertImageUrl("");
+      setInsertImageAlt("");
+      setToast({ type: "success", message: "Image inserted into the article editor." });
+    } catch (error) {
+      setToast({
+        type: "error",
+        message: error instanceof Error ? error.message : "Failed to insert image.",
+      });
+    }
+  };
+
+  const handleUploadEditorImage = async (file: File | undefined) => {
+    if (!file) return;
+    if (!file.type.startsWith("image/")) {
+      setToast({ type: "error", message: "Choose an image file." });
+      return;
+    }
+    if (file.size > maxEditorImageBytes) {
+      setToast({
+        type: "error",
+        message: "Choose an image under 2 MB for manual editor uploads.",
+      });
+      return;
+    }
+
+    const dataUrl = await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () =>
+        typeof reader.result === "string"
+          ? resolve(reader.result)
+          : reject(new Error("Could not read image file."));
+      reader.onerror = () => reject(new Error("Could not read image file."));
+      reader.readAsDataURL(file);
+    });
+
+    insertImageIntoDraft(dataUrl, insertImageAlt || file.name.replace(/\.[^.]+$/, ""));
+    setInsertImageAlt("");
+    setToast({
+      type: "success",
+      message: "Image added. It will be uploaded to WordPress media during publish.",
+    });
+  };
+
+  const handleOpenDraftInChatGpt = async () => {
+    await copyText(
+      buildChatGptCommand(),
+      "ChatGPT command copied. Paste it into ChatGPT with the connector enabled.",
+    );
+    openChatGpt();
+  };
+
+  const applyGeneratedArticle = (data: {
+    html: string;
+    meta: {
+      title?: string;
+      excerpt: string;
+      suggestedTags: string[];
+      seo: SeoPayload;
+    };
+    tokenCharge?: { amount: number; remaining: number };
+  }) => {
+    setGeneratedHtml(data.html);
+    if (data.meta.title) {
+      setTitle(data.meta.title);
+      if (!isSlugEdited) {
+        setCustomSlug(slugifyArticle(data.meta.title));
+      }
+    }
+    setExcerpt(data.meta.excerpt);
+    setSuggestedTags(data.meta.suggestedTags || []);
+    setSeoPayload((current) => ({
+      ...current,
+      ...data.meta.seo,
+      focusKeyword: data.meta.seo.focusKeyword || current.focusKeyword,
+      canonicalUrl: current.canonicalUrl || data.meta.seo.canonicalUrl || "",
+      og: { ...current.og, ...data.meta.seo.og },
+      twitter: { ...current.twitter, ...data.meta.seo.twitter },
+    }));
+    syncBalance(data.tokenCharge?.remaining);
   };
 
   const handleGenerateDraft = async () => {
@@ -499,21 +766,11 @@ export default function DashboardPage() {
       if (!response.ok) throw new Error(await getApiError(response));
       const data = (await response.json()) as {
         html: string;
-        meta: { excerpt: string; suggestedTags: string[]; seo: SeoPayload };
+        meta: { title?: string; excerpt: string; suggestedTags: string[]; seo: SeoPayload };
         tokenCharge?: { amount: number; remaining: number };
       };
-      setGeneratedHtml(data.html);
-      setExcerpt(data.meta.excerpt);
-      setSuggestedTags(data.meta.suggestedTags || []);
-      setSeoPayload((current) => ({
-        ...current,
-        ...data.meta.seo,
-        focusKeyword: data.meta.seo.focusKeyword || current.focusKeyword,
-        canonicalUrl: current.canonicalUrl || data.meta.seo.canonicalUrl || "",
-        og: { ...current.og, ...data.meta.seo.og },
-        twitter: { ...current.twitter, ...data.meta.seo.twitter },
-      }));
-      syncBalance(data.tokenCharge?.remaining);
+      applyGeneratedArticle(data);
+      setDraftViewMode("preview");
       setToast({
         type: "success",
         message: data.tokenCharge
@@ -527,6 +784,55 @@ export default function DashboardPage() {
       });
     } finally {
       setIsGeneratingDraft(false);
+    }
+  };
+
+  const handleEditDraft = async () => {
+    try {
+      if (!generatedHtml.trim()) throw new Error("Generate a draft before editing.");
+      if (!editPrompt.trim()) throw new Error("Add edit instructions first.");
+      if (!title.trim() || !brief.trim()) throw new Error("Title and topic brief are required.");
+      setIsEditingDraft(true);
+      setPublishResults([]);
+      const response = await fetch("/api/edit-article", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title: title.trim(),
+          brief: brief.trim(),
+          html: generatedHtml,
+          excerpt: excerpt.trim() || undefined,
+          editPrompt: editPrompt.trim(),
+          keywords: parseKeywords(keywords),
+          focusKeyword: seoPayload.focusKeyword.trim() || title.trim(),
+          tone,
+          wordCount: Number(wordCount),
+          links: normalizeLinks(links),
+          provider: aiProvider,
+          model: aiModel.trim() || undefined,
+        }),
+      });
+      if (!response.ok) throw new Error(await getApiError(response));
+      const data = (await response.json()) as {
+        html: string;
+        meta: { title?: string; excerpt: string; suggestedTags: string[]; seo: SeoPayload };
+        tokenCharge?: { amount: number; remaining: number };
+      };
+      applyGeneratedArticle(data);
+      setDraftViewMode("preview");
+      setToast({
+        type: "success",
+        message: data.tokenCharge
+          ? `Draft edited. ${data.tokenCharge.amount} tokens used.`
+          : "Draft edited successfully.",
+      });
+    } catch (error) {
+      setToast({
+        type: "error",
+        message: error instanceof Error ? error.message : "Failed to edit draft.",
+      });
+    } finally {
+      setIsEditingDraft(false);
     }
   };
 
@@ -581,8 +887,10 @@ export default function DashboardPage() {
           body: JSON.stringify({
             siteId: site.id,
             title: title.trim(),
+            slug: currentSlug || undefined,
             brief: brief.trim(),
             html: generatedHtml,
+            links: normalizeLinks(links),
             excerpt: excerpt.trim(),
             status: publishMode,
             scheduledAt:
@@ -830,6 +1138,7 @@ export default function DashboardPage() {
           { href: "/app/dashboard", label: "Workspace", hint: "Drafts, imports, and autopilot", group: "Workspace", icon: "workspace" },
           { href: "/billing", label: "Billing", hint: "Packages and token usage", group: "Revenue", icon: "billing" },
           { href: "/account", label: "Sites", hint: "Manage connected WordPress sites", group: "Settings", icon: "sites" },
+          { href: "/account#ai-keys", label: "AI Keys", hint: "OpenAI and Gemini credentials", group: "Settings", icon: "settings" },
           { href: "/admin", label: "Admin", hint: "Users and packages", visible: account.role === "ADMIN", group: "Operations", icon: "admin" },
         ] satisfies DashboardNavItem[]
       }
@@ -1001,7 +1310,7 @@ export default function DashboardPage() {
                           <button
                             key={category.id}
                             type="button"
-                            className={`rounded-full border px-3 py-1.5 text-xs font-medium transition ${
+                            className={`rounded-lg border px-3 py-1.5 text-xs font-medium transition ${
                               selected
                                 ? "border-blue-200 bg-blue-50 text-blue-800"
                                 : "border-slate-200 bg-white text-slate-600 hover:border-slate-300"
@@ -1044,7 +1353,7 @@ export default function DashboardPage() {
                             <button
                               key={tag.id}
                               type="button"
-                              className={`rounded-full border px-3 py-1.5 text-xs font-medium transition ${
+                              className={`rounded-lg border px-3 py-1.5 text-xs font-medium transition ${
                                 selected
                                   ? "border-emerald-200 bg-emerald-50 text-emerald-800"
                                   : "border-slate-200 bg-white text-slate-600 hover:border-slate-300"
@@ -1087,7 +1396,7 @@ export default function DashboardPage() {
                       <button
                         key={provider}
                         type="button"
-                        className={`rounded-2xl border px-3 py-2 text-left text-sm transition ${
+                        className={`rounded-lg border px-3 py-2 text-left text-sm font-medium transition ${
                           seoProvider === provider
                             ? "border-slate-900 bg-slate-900 text-white"
                             : "border-slate-200 bg-white text-slate-700 hover:border-slate-300"
@@ -1122,8 +1431,34 @@ export default function DashboardPage() {
                     <input className="input" value={title} onChange={(event) => setTitle(event.target.value)} placeholder="Best AI Writing Tools for Agencies" />
                   </div>
                   <div className="md:col-span-2">
+                    <div className="flex items-center justify-between gap-3">
+                      <label className="label">Post slug</label>
+                      <button
+                        type="button"
+                        className="text-xs font-semibold text-blue-700 hover:text-blue-800"
+                        onClick={() => {
+                          setCustomSlug(slugifyArticle(title));
+                          setIsSlugEdited(false);
+                        }}
+                      >
+                        Use title
+                      </button>
+                    </div>
+                    <input
+                      className="input"
+                      value={customSlug}
+                      onChange={(event) => {
+                        setIsSlugEdited(true);
+                        setCustomSlug(slugifyArticle(event.target.value));
+                      }}
+                      placeholder="best-ai-writing-tools-for-agencies"
+                    />
+                    <p className="helper">This becomes the WordPress permalink slug. Use lowercase words separated by hyphens.</p>
+                  </div>
+                  <div className="md:col-span-2">
                     <label className="label">Topic brief</label>
                     <textarea className="textarea min-h-[160px]" value={brief} onChange={(event) => setBrief(event.target.value)} placeholder="Describe the angle, target reader, objections, structure, and proof points." />
+                    <p className="helper">Use this description for placement notes. The Link Rules table tells the generator which URLs and anchor text to include, whether each link is required, whether it is dofollow or nofollow, and all published links open in a new tab.</p>
                   </div>
                   <div>
                     <label className="label">Keywords</label>
@@ -1149,14 +1484,19 @@ export default function DashboardPage() {
                   </div>
                   <div>
                     <label className="label">AI engine</label>
-                    <select className="select" value={aiProvider} onChange={(event) => setAiProvider(event.target.value as AiProvider)}>
-                      <option value="openai">OpenAI</option>
-                      <option value="ollama">Ollama (self-hosted)</option>
+                    <select className="select" value={aiProvider} onChange={(event) => handleAiProviderChange(event.target.value as AiProvider)}>
+                      {aiProviderOptions.map((option) => (
+                        <option key={option.value} value={option.value}>{option.label}</option>
+                      ))}
                     </select>
                   </div>
                   <div>
-                    <label className="label">Model {aiProvider === "ollama" ? "(Ollama)" : "(OpenAI)"}</label>
-                    <input className="input" value={aiModel} onChange={(event) => setAiModel(event.target.value)} placeholder={aiProvider === "ollama" ? "e.g. llama3.1 (defaults to OLLAMA_TEXT_MODEL)" : "e.g. gpt-4.1-mini (optional override)"} />
+                    <label className="label">Model ({getAiProviderLabel(aiProvider)})</label>
+                    <select className="select" value={aiModel} onChange={(event) => setAiModel(event.target.value)}>
+                      {availableAiModels.map((model) => (
+                        <option key={model.value} value={model.value}>{model.label}</option>
+                      ))}
+                    </select>
                   </div>
                   <div>
                     <label className="label">Publish mode</label>
@@ -1187,9 +1527,176 @@ export default function DashboardPage() {
                 </div>
 
                 <div className="mt-4 flex flex-wrap gap-2">
-                  <button type="button" className="button-primary" onClick={handleGenerateDraft} disabled={isBusy}>{isGeneratingDraft ? "Generating..." : "Generate draft"}</button>
-                  <button type="button" className="button-muted" onClick={handleGenerateImage} disabled={isBusy || skipManualImages}>{isGeneratingImage ? "Generating..." : "Generate image"}</button>
-                  <button type="button" className="button-secondary" onClick={handlePublishPost} disabled={isBusy || selectedSites.length === 0}>{isPublishing ? `Publishing to ${selectedSites.length} site(s)...` : `Publish to ${selectedSites.length || 0} site(s)`}</button>
+                  <button type="button" className="button-primary" onClick={handleGenerateDraft} disabled={isBusy}>
+                    <Wand2 className="h-4 w-4" />
+                    {isGeneratingDraft ? "Generating..." : "Generate draft"}
+                  </button>
+                  <button type="button" className="button-muted" onClick={handleGenerateImage} disabled={isBusy || skipManualImages}>
+                    <ImageIcon className="h-4 w-4" />
+                    {isGeneratingImage ? "Generating..." : "Generate image"}
+                  </button>
+                  <button type="button" className="button-secondary" onClick={handlePublishPost} disabled={isBusy || selectedSites.length === 0}>
+                    <Save className="h-4 w-4" />
+                    {isPublishing ? `Publishing to ${selectedSites.length} site(s)...` : `Publish to ${selectedSites.length || 0} site(s)`}
+                  </button>
+                </div>
+
+                <div className="mt-5 grid gap-4 lg:grid-cols-[minmax(0,0.8fr)_minmax(0,1.2fr)]">
+                  <div className="panel-muted px-4 py-4">
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <p className="eyebrow">Edit Draft</p>
+                        <h3 className="mt-1 text-sm font-semibold text-slate-950">Revision prompt</h3>
+                      </div>
+                      {generatedHtml ? <span className="badge-success">Ready</span> : <span className="badge-neutral">Waiting</span>}
+                    </div>
+                    <textarea
+                      className="textarea mt-3 min-h-[150px]"
+                      value={editPrompt}
+                      onChange={(event) => setEditPrompt(event.target.value)}
+                      placeholder="Example: make the intro shorter, add a pricing comparison section, and make the conclusion more persuasive."
+                    />
+                    <button
+                      type="button"
+                      className="button-primary mt-3 w-full"
+                      onClick={handleEditDraft}
+                      disabled={isBusy || !generatedHtml.trim()}
+                    >
+                      <Wand2 className="h-4 w-4" />
+                      {isEditingDraft ? "Editing..." : "Apply edit prompt"}
+                    </button>
+                  </div>
+
+                  <div className="panel-muted px-4 py-4">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <div>
+                        <p className="eyebrow">Article Workspace</p>
+                        <h3 className="mt-1 text-sm font-semibold text-slate-950">Review and manual edits</h3>
+                      </div>
+                      <div className="inline-flex rounded-lg border border-slate-200 bg-white p-1">
+                        <button
+                          type="button"
+                          className={`inline-flex items-center gap-2 rounded-md px-3 py-1.5 text-xs font-semibold transition ${
+                            draftViewMode === "preview"
+                              ? "bg-slate-900 text-white"
+                              : "text-slate-600 hover:bg-slate-50"
+                          }`}
+                          onClick={() => setDraftViewMode("preview")}
+                        >
+                          <Eye className="h-3.5 w-3.5" />
+                          Preview
+                        </button>
+                        <button
+                          type="button"
+                          className={`inline-flex items-center gap-2 rounded-md px-3 py-1.5 text-xs font-semibold transition ${
+                            draftViewMode === "edit"
+                              ? "bg-slate-900 text-white"
+                              : "text-slate-600 hover:bg-slate-50"
+                          }`}
+                          onClick={() => setDraftViewMode("edit")}
+                        >
+                          <Wand2 className="h-3.5 w-3.5" />
+                          Edit
+                        </button>
+                        <button
+                          type="button"
+                          className={`inline-flex items-center gap-2 rounded-md px-3 py-1.5 text-xs font-semibold transition ${
+                            draftViewMode === "html"
+                              ? "bg-slate-900 text-white"
+                              : "text-slate-600 hover:bg-slate-50"
+                          }`}
+                          onClick={() => setDraftViewMode("html")}
+                        >
+                          <Code2 className="h-3.5 w-3.5" />
+                          HTML
+                        </button>
+                      </div>
+                    </div>
+                    <div className="mt-3 grid gap-2 rounded-lg border border-slate-200 bg-white p-3">
+                      <div className="grid gap-2 md:grid-cols-[minmax(0,1fr)_minmax(0,0.8fr)]">
+                        <input
+                          className="input"
+                          value={insertImageUrl}
+                          onChange={(event) => setInsertImageUrl(event.target.value)}
+                          placeholder="https://example.com/image.jpg"
+                        />
+                        <input
+                          className="input"
+                          value={insertImageAlt}
+                          onChange={(event) => setInsertImageAlt(event.target.value)}
+                          placeholder="Image alt text"
+                        />
+                      </div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <button
+                          type="button"
+                          className="button-muted"
+                          onClick={handleInsertImageUrl}
+                          disabled={!generatedHtml.trim()}
+                        >
+                          <ImageIcon className="h-4 w-4" />
+                          Insert image URL
+                        </button>
+                        <label className={`button-muted cursor-pointer ${!generatedHtml.trim() ? "pointer-events-none opacity-50" : ""}`}>
+                          <ImageIcon className="h-4 w-4" />
+                          Upload image into article
+                          <input
+                            type="file"
+                            accept="image/*"
+                            className="sr-only"
+                            disabled={!generatedHtml.trim()}
+                            onChange={(event) => {
+                              void handleUploadEditorImage(event.target.files?.[0]);
+                              event.target.value = "";
+                            }}
+                          />
+                        </label>
+                        <button
+                          type="button"
+                          className="button-muted"
+                          disabled={!generatedHtml.trim() || !generatedImage}
+                          onClick={() => {
+                            if (!generatedImage) return;
+                            insertImageIntoDraft(
+                              `data:${generatedImage.mimeType};base64,${generatedImage.imageBase64}`,
+                              insertImageAlt || generatedImage.altTextSuggestion,
+                            );
+                            setInsertImageAlt("");
+                            setToast({
+                              type: "success",
+                              message:
+                                "Generated image inserted into the article body.",
+                            });
+                          }}
+                        >
+                          <ImageIcon className="h-4 w-4" />
+                          Insert generated image
+                        </button>
+                      </div>
+                      <p className="text-xs leading-5 text-slate-500">
+                        Uploaded editor images are inserted for review now and uploaded to WordPress media when you publish.
+                      </p>
+                    </div>
+                    {draftViewMode === "html" ? (
+                      <textarea
+                        className="textarea mt-3 min-h-[360px] font-mono text-xs leading-6"
+                        value={generatedHtml}
+                        onChange={(event) => setGeneratedHtml(event.target.value)}
+                        placeholder="<h2>Your generated article HTML will appear here.</h2>"
+                      />
+                    ) : draftViewMode === "edit" && generatedHtml ? (
+                      <TiptapArticleEditor html={generatedHtml} onChange={setGeneratedHtml} />
+                    ) : generatedHtml ? (
+                      <article
+                        className="mt-3 max-h-[420px] overflow-auto rounded-lg border border-slate-200 bg-white px-4 py-4 text-sm leading-7 text-slate-700 [&_h2]:mt-6 [&_h2]:text-base [&_h2]:font-semibold [&_h2]:text-slate-950 [&_h3]:mt-5 [&_h3]:text-sm [&_h3]:font-semibold [&_h3]:text-slate-950 [&_li]:ml-5 [&_li]:list-disc [&_p]:my-3"
+                        dangerouslySetInnerHTML={{ __html: generatedHtml }}
+                      />
+                    ) : (
+                      <div className="mt-3">
+                        <EmptyState title="No draft yet" description="Generate a draft, then refine it here before publishing." />
+                      </div>
+                    )}
+                  </div>
                 </div>
 
                 {excerpt ? (
@@ -1298,14 +1805,19 @@ export default function DashboardPage() {
                 </div>
                 <div>
                   <label className="label">AI engine</label>
-                  <select className="select" value={aiProvider} onChange={(event) => setAiProvider(event.target.value as AiProvider)}>
-                    <option value="openai">OpenAI</option>
-                    <option value="ollama">Ollama (self-hosted)</option>
-                  </select>
+                  <select className="select" value={aiProvider} onChange={(event) => handleAiProviderChange(event.target.value as AiProvider)}>
+                      {aiProviderOptions.map((option) => (
+                        <option key={option.value} value={option.value}>{option.label}</option>
+                      ))}
+                    </select>
                 </div>
                 <div>
-                  <label className="label">Model {aiProvider === "ollama" ? "(Ollama)" : "(OpenAI)"}</label>
-                  <input className="input" value={aiModel} onChange={(event) => setAiModel(event.target.value)} placeholder={aiProvider === "ollama" ? "e.g. llama3.1 (defaults to OLLAMA_TEXT_MODEL)" : "e.g. gpt-4.1-mini (optional override)"} />
+                  <label className="label">Model ({getAiProviderLabel(aiProvider)})</label>
+                  <select className="select" value={aiModel} onChange={(event) => setAiModel(event.target.value)}>
+                      {availableAiModels.map((model) => (
+                        <option key={model.value} value={model.value}>{model.label}</option>
+                      ))}
+                    </select>
                 </div>
                 <div>
                   <label className="label">In-post images</label>
@@ -1327,6 +1839,61 @@ export default function DashboardPage() {
         </div>
 
         <div className="space-y-4">
+          <section className="panel px-4 py-4">
+            <div className="section-header">
+              <div>
+                <p className="eyebrow">ChatGPT</p>
+                <h2 className="mt-1 text-sm font-semibold text-slate-950">Connector handoff</h2>
+              </div>
+              <span className="badge-info">MCP</span>
+            </div>
+            <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-3">
+              <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">
+                Connector URL
+              </p>
+              <p className="mt-1 break-all font-mono text-xs leading-5 text-slate-700">
+                {getMcpConnectorUrl()}
+              </p>
+            </div>
+            <div className="mt-3 grid gap-2">
+              <button
+                type="button"
+                className="button-secondary w-full"
+                onClick={handleConnectChatGpt}
+              >
+                <PlugZap className="h-4 w-4" />
+                Connect ChatGPT
+                <ExternalLink className="h-3.5 w-3.5" />
+              </button>
+              <button
+                type="button"
+                className="button-primary w-full"
+                onClick={handleOpenDraftInChatGpt}
+              >
+                <MessageSquare className="h-4 w-4" />
+                Open Draft In ChatGPT
+                <ExternalLink className="h-3.5 w-3.5" />
+              </button>
+              <button
+                type="button"
+                className="button-muted w-full"
+                onClick={() =>
+                  void copyText(
+                    buildChatGptCommand(),
+                    "ChatGPT command copied.",
+                  )
+                }
+              >
+                <Copy className="h-4 w-4" />
+                Copy ChatGPT Command
+              </button>
+            </div>
+            <p className="mt-3 text-xs leading-5 text-slate-500">
+              ChatGPT requires the user to approve connector setup and run the
+              command from ChatGPT.
+            </p>
+          </section>
+
           <section className="panel px-4 py-4">
             <div className="flex items-center justify-between gap-3">
               <div>
@@ -1352,15 +1919,19 @@ export default function DashboardPage() {
               </div>
             </div>
             <div className="mt-3 grid gap-3">
-              <div className="flex items-center justify-between rounded-2xl border border-slate-200 bg-slate-50 px-3 py-3">
+              <div className="flex items-center justify-between status-row">
                 <span className="text-sm text-slate-700">Draft generation</span>
                 <span className={isGeneratingDraft ? "badge-info" : "badge-neutral"}>{isGeneratingDraft ? "Running" : generatedHtml ? "Ready" : "Idle"}</span>
               </div>
-              <div className="flex items-center justify-between rounded-2xl border border-slate-200 bg-slate-50 px-3 py-3">
+              <div className="flex items-center justify-between status-row">
+                <span className="text-sm text-slate-700">Draft editing</span>
+                <span className={isEditingDraft ? "badge-info" : "badge-neutral"}>{isEditingDraft ? "Running" : editPrompt.trim() ? "Queued" : "Idle"}</span>
+              </div>
+              <div className="flex items-center justify-between status-row">
                 <span className="text-sm text-slate-700">Image generation</span>
                 <span className={isGeneratingImage ? "badge-info" : "badge-neutral"}>{isGeneratingImage ? "Running" : generatedImage ? "Ready" : "Idle"}</span>
               </div>
-              <div className="flex items-center justify-between rounded-2xl border border-slate-200 bg-slate-50 px-3 py-3">
+              <div className="flex items-center justify-between status-row">
                 <span className="text-sm text-slate-700">Publishing</span>
                 <span className={isPublishing || isPublishingGoogleDoc || isAutoPublishingNews ? "badge-info" : "badge-neutral"}>{isPublishing || isPublishingGoogleDoc || isAutoPublishingNews ? "Running" : "Idle"}</span>
               </div>
@@ -1373,7 +1944,7 @@ export default function DashboardPage() {
                 <p className="eyebrow">Featured Image</p>
                 <span className="badge-success">Generated</span>
               </div>
-              <img src={`data:${generatedImage.mimeType};base64,${generatedImage.imageBase64}`} alt={generatedImage.altTextSuggestion} className="mt-3 max-h-72 w-full rounded-2xl border border-slate-200 object-cover" />
+              <img src={`data:${generatedImage.mimeType};base64,${generatedImage.imageBase64}`} alt={generatedImage.altTextSuggestion} className="mt-3 max-h-72 w-full rounded-lg border border-slate-200 object-cover" />
               <div className="mt-3 space-y-1 text-xs text-slate-500">
                 <p>Suggested alt text: {generatedImage.altTextSuggestion}</p>
                 <p>Filename: {generatedImage.filenameSuggestion}</p>

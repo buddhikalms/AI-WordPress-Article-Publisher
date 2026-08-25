@@ -252,6 +252,91 @@ final class AIA_Claude_Api_Provider extends AIA_AI_Provider
 	}
 }
 
+final class AIA_Gemini_Provider extends AIA_AI_Provider
+{
+	public function get_id()
+	{
+		return 'gemini';
+	}
+
+	public function get_label()
+	{
+		return 'Gemini';
+	}
+
+	public function generate_text($messages, $options = array())
+	{
+		$api_key = trim((string) (isset($this->settings['gemini_api_key']) ? $this->settings['gemini_api_key'] : ''));
+		$model = trim((string) (isset($this->settings['gemini_model']) ? $this->settings['gemini_model'] : AI_Article_Publisher::DEFAULT_GEMINI_MODEL));
+		if (!$api_key) {
+			throw new AI_Article_Publisher_Error('Gemini API key is missing. Save it in Credentials first.', 500);
+		}
+		if (!$model) {
+			$model = AI_Article_Publisher::DEFAULT_GEMINI_MODEL;
+		}
+
+		$system = '';
+		$user_parts = array();
+		foreach ($messages as $message) {
+			if (!is_array($message) || empty($message['role'])) {
+				continue;
+			}
+			if ('system' === $message['role']) {
+				$system .= ($system ? "\n\n" : '') . (string) $message['content'];
+				continue;
+			}
+			$user_parts[] = strtoupper((string) $message['role']) . ":\n" . (string) $message['content'];
+		}
+
+		$payload = array(
+			'systemInstruction' => array(
+				'parts' => array(array('text' => $system)),
+			),
+			'contents' => array(
+				array(
+					'role' => 'user',
+					'parts' => array(array('text' => trim(implode("\n\n", $user_parts)))),
+				),
+			),
+			'generationConfig' => array(
+				'temperature' => isset($options['temperature']) ? (float) $options['temperature'] : 0.4,
+				'responseMimeType' => 'application/json',
+			),
+		);
+		if (!empty($options['max_tokens'])) {
+			$payload['generationConfig']['maxOutputTokens'] = (int) $options['max_tokens'];
+		}
+
+		$response = wp_remote_post(
+			'https://generativelanguage.googleapis.com/v1beta/models/' . rawurlencode($model) . ':generateContent',
+			array(
+				'timeout' => 120,
+				'headers' => array(
+					'x-goog-api-key' => $api_key,
+					'Content-Type' => 'application/json',
+				),
+				'body' => wp_json_encode($payload),
+			)
+		);
+
+		$decoded = $this->decode_remote_json($response, 'Gemini generateContent request failed.');
+		$parts = array();
+		if (!empty($decoded['candidates'][0]['content']['parts']) && is_array($decoded['candidates'][0]['content']['parts'])) {
+			foreach ($decoded['candidates'][0]['content']['parts'] as $content_item) {
+				if (is_array($content_item) && isset($content_item['text'])) {
+					$parts[] = (string) $content_item['text'];
+				}
+			}
+		}
+
+		$content = trim(implode("\n", $parts));
+		if (!$content) {
+			throw new AI_Article_Publisher_Error('Gemini returned an empty response.', 502, $decoded);
+		}
+		return $content;
+	}
+}
+
 final class AIA_Manual_Claude_Provider extends AIA_AI_Provider
 {
 	public function get_id()

@@ -2,6 +2,7 @@ import { HttpError } from "@/lib/errors";
 import {
   deriveFocusKeyword,
   hydrateGeneratedMeta,
+  normalizeGeneratedArticleCandidate,
   parseJsonFromModel,
 } from "@/lib/openai";
 import {
@@ -12,18 +13,20 @@ import {
 } from "@/lib/schemas";
 import type { NewsSourceArticle } from "@/lib/newsdata";
 
-const defaultOllamaModel = process.env.OLLAMA_TEXT_MODEL || "llama3.1";
-const ollamaTimeoutMs = Number(process.env.OLLAMA_TIMEOUT_MS) || 180_000;
+const defaultGeminiModel = process.env.GEMINI_TEXT_MODEL || "gemini-3.5-flash";
+const geminiTimeoutMs = Number(process.env.GEMINI_TIMEOUT_MS) || 180_000;
 
-const getOllamaBaseUrl = () => {
-  const baseUrl = process.env.OLLAMA_BASE_URL;
-  if (!baseUrl) {
+type GeminiAuthInput = { apiKey?: string };
+
+const getGeminiApiKey = (apiKey?: string) => {
+  const resolvedApiKey = apiKey?.trim() || process.env.GEMINI_API_KEY;
+  if (!resolvedApiKey) {
     throw new HttpError(
       500,
-      "OLLAMA_BASE_URL is missing. Add it to .env.local before generating with Ollama.",
+      "Gemini API key is missing. Add it in AI Keys or configure GEMINI_API_KEY.",
     );
   }
-  return baseUrl.replace(/\/+$/, "");
+  return resolvedApiKey;
 };
 
 const formatLinkForPrompt = (link: {
@@ -42,68 +45,98 @@ const formatLinkForPrompt = (link: {
   ].join(" | ");
 };
 
-const callOllamaChat = async (input: {
+const callGemini = async (input: {
   model?: string;
+  apiKey?: string;
   system: string;
   user: string;
   temperature: number;
 }): Promise<string> => {
-  const baseUrl = getOllamaBaseUrl();
-  const model = input.model?.trim() || defaultOllamaModel;
+  const apiKey = getGeminiApiKey(input.apiKey);
+  const model = input.model?.trim() || defaultGeminiModel;
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), ollamaTimeoutMs);
+  const timeout = setTimeout(() => controller.abort(), geminiTimeoutMs);
 
   let response: Response;
   try {
-    response = await fetch(`${baseUrl}/api/chat`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      signal: controller.signal,
-      body: JSON.stringify({
+    response = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(
         model,
-        stream: false,
-        format: "json",
-        options: { temperature: input.temperature },
-        messages: [
-          { role: "system", content: input.system },
-          { role: "user", content: input.user },
-        ],
-      }),
-    });
+      )}:generateContent`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-goog-api-key": apiKey,
+        },
+        signal: controller.signal,
+        body: JSON.stringify({
+          systemInstruction: {
+            parts: [{ text: input.system }],
+          },
+          contents: [
+            {
+              role: "user",
+              parts: [{ text: input.user }],
+            },
+          ],
+          generationConfig: {
+            temperature: input.temperature,
+            responseMimeType: "application/json",
+          },
+        }),
+      },
+    );
   } catch (error) {
     if (error instanceof Error && error.name === "AbortError") {
       throw new HttpError(
         504,
-        `Ollama did not respond within ${Math.round(ollamaTimeoutMs / 1000)}s. Check that the model is loaded and the server is reachable at ${baseUrl}.`,
+        `Gemini did not respond within ${Math.round(geminiTimeoutMs / 1000)}s.`,
       );
     }
     throw new HttpError(
       502,
-      `Failed to reach Ollama at ${baseUrl}. ${error instanceof Error ? error.message : ""}`.trim(),
+      `Failed to reach Gemini. ${error instanceof Error ? error.message : ""}`.trim(),
     );
   } finally {
     clearTimeout(timeout);
   }
 
+  const bodyText = await response.text();
+  let data: {
+    candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
+    error?: { message?: string };
+  };
+  try {
+    data = JSON.parse(bodyText);
+  } catch {
+    throw new HttpError(502, "Gemini returned an invalid JSON response.", {
+      body: bodyText.slice(0, 500),
+    });
+  }
+
   if (!response.ok) {
-    const bodyText = await response.text().catch(() => "");
     throw new HttpError(
       502,
-      `Ollama request failed with status ${response.status}.`,
-      bodyText ? { body: bodyText.slice(0, 500) } : undefined,
+      data.error?.message || `Gemini request failed with status ${response.status}.`,
+      data,
     );
   }
 
-  const data = (await response.json()) as { message?: { content?: string } };
-  const content = data.message?.content;
+  const content = data.candidates?.[0]?.content?.parts
+    ?.map((part) => part.text || "")
+    .join("\n")
+    .trim();
+
   if (!content) {
-    throw new HttpError(502, "Ollama returned an empty response.");
+    throw new HttpError(502, "Gemini returned an empty response.", data);
   }
+
   return content;
 };
 
 export const generateArticleDraft = async (
-  input: GenerateArticleRequest,
+  input: GenerateArticleRequest & GeminiAuthInput,
 ): Promise<GenerateArticleResponsePayload> => {
   const requiredLinks = input.links.filter((link) => link.required);
   const optionalLinks = input.links.filter((link) => !link.required);
@@ -122,8 +155,9 @@ export const generateArticleDraft = async (
           .join("\n")
       : "None";
 
-  const content = await callOllamaChat({
+  const content = await callGemini({
     model: input.model,
+    apiKey: input.apiKey,
     temperature: 0.4,
     system: [
       "You are a senior editorial SEO strategist and human copywriter creating WordPress-ready content.",
@@ -183,12 +217,17 @@ export const generateArticleDraft = async (
     ].join("\n"),
   });
 
-  const parsed = parseJsonFromModel(content);
+  const parsed = normalizeGeneratedArticleCandidate(
+    parseJsonFromModel(content),
+    input.title,
+    input.brief || input.title,
+    input.focusKeyword,
+  );
   const validation = generatedArticleResponseSchema.safeParse(parsed);
   if (!validation.success) {
     throw new HttpError(
       502,
-      "Ollama response did not match the expected article schema.",
+      "Gemini response did not match the expected article schema.",
       validation.error.flatten(),
     );
   }
@@ -197,7 +236,7 @@ export const generateArticleDraft = async (
   if (generated.html.includes("```")) {
     throw new HttpError(
       502,
-      "Ollama returned markdown fences instead of pure HTML.",
+      "Gemini returned markdown fences instead of pure HTML.",
     );
   }
 
@@ -213,7 +252,7 @@ export const generateArticleDraft = async (
 };
 
 export const editArticleDraft = async (
-  input: EditArticleRequest,
+  input: EditArticleRequest & GeminiAuthInput,
 ): Promise<GenerateArticleResponsePayload> => {
   const requiredLinks = input.links.filter((link) => link.required);
   const requiredLinksPrompt =
@@ -223,8 +262,9 @@ export const editArticleDraft = async (
           .join("\n")
       : "None";
 
-  const content = await callOllamaChat({
+  const content = await callGemini({
     model: input.model,
+    apiKey: input.apiKey,
     temperature: 0.25,
     system: [
       "You are a senior WordPress editor revising an existing SEO article.",
@@ -279,12 +319,17 @@ export const editArticleDraft = async (
     ].join("\n"),
   });
 
-  const parsed = parseJsonFromModel(content);
+  const parsed = normalizeGeneratedArticleCandidate(
+    parseJsonFromModel(content),
+    input.title,
+    input.excerpt || input.brief || input.title,
+    input.focusKeyword,
+  );
   const validation = generatedArticleResponseSchema.safeParse(parsed);
   if (!validation.success) {
     throw new HttpError(
       502,
-      "Ollama response did not match the expected edited article schema.",
+      "Gemini response did not match the expected edited article schema.",
       validation.error.flatten(),
     );
   }
@@ -293,7 +338,7 @@ export const editArticleDraft = async (
   if (generated.html.includes("```")) {
     throw new HttpError(
       502,
-      "Ollama returned markdown fences instead of pure HTML.",
+      "Gemini returned markdown fences instead of pure HTML.",
     );
   }
 
@@ -313,10 +358,12 @@ export const rewriteNewsAsOriginalArticle = async (input: {
   tone: string;
   wordCount: number;
   model?: string;
+  apiKey?: string;
   article: NewsSourceArticle;
 }): Promise<GenerateArticleResponsePayload> => {
-  const content = await callOllamaChat({
+  const content = await callGemini({
     model: input.model,
+    apiKey: input.apiKey,
     temperature: 0.45,
     system: [
       "You are an editor producing original, factual, SEO-ready WordPress news articles.",
@@ -369,12 +416,18 @@ export const rewriteNewsAsOriginalArticle = async (input: {
     ].join("\n"),
   });
 
-  const parsed = parseJsonFromModel(content);
+  const fallbackKeywordFromSource = deriveFocusKeyword(input.article.title);
+  const parsed = normalizeGeneratedArticleCandidate(
+    parseJsonFromModel(content),
+    input.article.title,
+    input.article.description || input.article.title,
+    fallbackKeywordFromSource,
+  );
   const validation = generatedArticleResponseSchema.safeParse(parsed);
   if (!validation.success) {
     throw new HttpError(
       502,
-      "Ollama response did not match the expected rewritten article schema.",
+      "Gemini response did not match the expected rewritten article schema.",
       validation.error.flatten(),
     );
   }
@@ -383,7 +436,7 @@ export const rewriteNewsAsOriginalArticle = async (input: {
   if (generated.html.includes("```")) {
     throw new HttpError(
       502,
-      "Ollama returned markdown fences instead of pure HTML.",
+      "Gemini returned markdown fences instead of pure HTML.",
     );
   }
 
