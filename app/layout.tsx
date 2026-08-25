@@ -1,3 +1,4 @@
+/* eslint-disable @next/next/no-css-tags */
 import type { Metadata } from "next";
 import "@/app/globals.css";
 import Providers from "@/components/Providers";

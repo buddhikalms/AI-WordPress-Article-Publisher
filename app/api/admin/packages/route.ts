@@ -9,6 +9,9 @@ export const runtime = "nodejs";
 
 const normalizeCurrency = (value: string) => value.trim().toLowerCase();
 
+const toPackageFeatureListInput = (featureList: string[] | undefined) =>
+  featureList as unknown as string | undefined;
+
 type StripePackageSyncInput = {
   name: string;
   slug: string;
@@ -273,7 +276,7 @@ export async function POST(request: Request) {
         name: parsed.data.name,
         slug: parsed.data.slug,
         description: parsed.data.description,
-        featureList: parsed.data.featureList,
+        featureList: toPackageFeatureListInput(parsed.data.featureList),
         priceCents: parsed.data.priceCents,
         currency,
         tokenAmount: parsed.data.tokenAmount,
@@ -319,7 +322,9 @@ export async function PUT(request: Request) {
     if (rest.name !== undefined) updates.name = rest.name;
     if (rest.slug !== undefined) updates.slug = rest.slug;
     if (rest.description !== undefined) updates.description = rest.description;
-    if (rest.featureList !== undefined) updates.featureList = rest.featureList;
+    if (rest.featureList !== undefined) {
+      updates.featureList = toPackageFeatureListInput(rest.featureList);
+    }
     if (rest.priceCents !== undefined) updates.priceCents = rest.priceCents;
     if (rest.currency !== undefined) updates.currency = rest.currency.toLowerCase();
     if (rest.tokenAmount !== undefined) updates.tokenAmount = rest.tokenAmount;
